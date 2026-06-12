@@ -50,17 +50,19 @@ class DesktopPet:
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
 
-        transparent_hex = "#%02x%02x%02x" % TRANSPARENT
-        self.root.config(bg=transparent_hex)
         if sys.platform == "darwin":
-            # macOS: der ganze Fensterhintergrund wird transparent,
-            # "-transparentcolor" gibt es hier nicht.
+            # macOS: die spezielle Farbe "systemTransparent" wird
+            # zusammen mit "-transparent" unsichtbar.
+            bg_color = "systemTransparent"
+            self.root.config(bg=bg_color)
             self.root.attributes("-transparent", True)
         else:
-            # Windows: nur diese eine Farbe wird unsichtbar.
-            self.root.attributes("-transparentcolor", transparent_hex)
+            # Windows: diese eine Farbe wird per "-transparentcolor" unsichtbar.
+            bg_color = "#%02x%02x%02x" % TRANSPARENT
+            self.root.config(bg=bg_color)
+            self.root.attributes("-transparentcolor", bg_color)
 
-        self.label = tk.Label(self.root, bd=0, highlightthickness=0, bg=transparent_hex)
+        self.label = tk.Label(self.root, bd=0, highlightthickness=0, bg=bg_color)
         self.label.pack()
 
         self.sprites = self.load_sprites()
@@ -106,20 +108,24 @@ class DesktopPet:
             img = Image.open(path).convert("RGBA")
             img = img.resize((PET_SIZE, PET_SIZE), Image.LANCZOS)
 
-            # Alpha hart auf an/aus setzen, damit beim Einfügen auf den
-            # Magenta-Hintergrund kein rosa Rand durch halbtransparente
-            # Kantenpixel entsteht.
+            # Alpha hart auf an/aus setzen, damit keine halbtransparenten
+            # Kantenpixel mit dem Hintergrund verschwimmen (rosa Rand).
             r, g, b, alpha = img.split()
             alpha = alpha.point(lambda a: 255 if a > 128 else 0)
             img = Image.merge("RGBA", (r, g, b, alpha))
 
-            # Transparenz -> Magenta-Hintergrund (für -transparentcolor)
-            bg = Image.new("RGBA", img.size, TRANSPARENT + (255,))
-            bg.paste(img, (0, 0), img)
-            bg = bg.convert("RGB")
+            if sys.platform == "darwin":
+                # macOS: echte Transparenz behalten, Label-Hintergrund
+                # "systemTransparent" sorgt für den Durchblick.
+                final = img
+            else:
+                # Windows: Transparenz -> Magenta-Hintergrund (für -transparentcolor)
+                bg = Image.new("RGBA", img.size, TRANSPARENT + (255,))
+                bg.paste(img, (0, 0), img)
+                final = bg.convert("RGB")
 
-            normal = ImageTk.PhotoImage(bg)
-            mirrored = ImageTk.PhotoImage(ImageOps.mirror(bg))
+            normal = ImageTk.PhotoImage(final)
+            mirrored = ImageTk.PhotoImage(ImageOps.mirror(final))
             sprites[name] = {-1: normal, 1: mirrored}
         return sprites
 
