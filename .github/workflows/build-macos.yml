@@ -1,0 +1,38 @@
+name: Build macOS App
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r requirements.txt pyinstaller
+
+      - name: Build app with PyInstaller
+        run: |
+          pyinstaller --windowed --name "ChildePet" \
+            --add-data "sprites:sprites" \
+            desktop_pet.py
+
+      - name: Zip the app bundle
+        run: |
+          cd dist
+          ditto -c -k --sequesterRsrc --keepParent "ChildePet.app" "ChildePet-macOS.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChildePet-macOS
+          path: dist/ChildePet-macOS.zip
