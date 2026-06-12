@@ -36,3 +36,17 @@ jobs:
         with:
           name: ChildePet-macOS
           path: dist/ChildePet-macOS.zip
+
+      - name: Smoke test - run the app and take a screenshot
+        run: |
+          open dist/ChildePet.app
+          sleep 6
+          screencapture -x smoke_screenshot.png || true
+          sleep 1
+          pkill -f ChildePet || true
+
+      - name: Upload screenshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-screenshot
+          path: smoke_screenshot.png
