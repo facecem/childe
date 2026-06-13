@@ -5,11 +5,25 @@ import sys
 import time
 import json
 import threading
+import subprocess
+import tempfile
+import wave
 import urllib.request
 import tkinter as tk
 import random
 from collections import deque
 from PIL import Image, ImageTk, ImageOps
+
+try:
+    import sounddevice as sd
+except Exception:
+    sd = None
+
+try:
+    from whisper_tiny import find_whisper_exe, find_model
+except Exception:
+    find_whisper_exe = lambda: ""
+    find_model = lambda: ""
 
 PET_SIZE = 110           # Zielgröße des Pets in Pixeln (Sprites sind 128x128)
 TASKBAR_OFFSET = 40
@@ -75,6 +89,40 @@ def ask_ollama(prompt):
     return result.get("response", "").strip() or "..."
 
 
+# ------------------------------------------------------------
+# Sprache (whisper.cpp tiny)
+# ------------------------------------------------------------
+RECORD_SECONDS = 4
+RECORD_SAMPLE_RATE = 16000
+
+
+def record_audio(path, seconds=RECORD_SECONDS, sample_rate=RECORD_SAMPLE_RATE):
+    audio = sd.rec(int(seconds * sample_rate), samplerate=sample_rate, channels=1, dtype="int16")
+    sd.wait()
+    with wave.open(path, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(audio.tobytes())
+
+
+def transcribe_audio(path, language="de"):
+    exe = find_whisper_exe()
+    model = find_model()
+    if not exe or not model:
+        return None, "whisper.cpp wurde nicht gefunden (siehe whisper_tiny.py)."
+
+    cmd = [exe, "-m", model, "-f", path, "--no-timestamps"]
+    if language:
+        cmd += ["-l", language]
+
+    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+    text = result.stdout.strip()
+    if result.returncode != 0 or not text:
+        return None, result.stderr.strip() or "Konnte nichts verstehen."
+    return text, None
+
+
 class DesktopPet:
     def __init__(self):
         self.root = tk.Tk()
@@ -130,6 +178,7 @@ class DesktopPet:
         self.chat_win = None
         self.bubble_win = None
         self.bubble_after_id = None
+        self.is_recording = False
 
         self.root.geometry(f"{PET_SIZE}x{PET_SIZE}+{self.x}+{int(self.y)}")
 
@@ -347,6 +396,8 @@ class DesktopPet:
     def on_right_click(self, event):
         menu = tk.Menu(self.root, tearoff=0)
         menu.add_command(label="Mit Childe reden", command=self.open_chat)
+        if sd is not None:
+            menu.add_command(label="🎤 Mit Childe sprechen", command=self.speak_to_childe)
         menu.add_separator()
         menu.add_command(label="Beenden", command=self.root.destroy)
         menu.tk_popup(event.x_root, event.y_root)
@@ -368,10 +419,13 @@ class DesktopPet:
 
         x = int(self.x)
         y = max(0, int(self.y) - 90)
-        win.geometry(f"280x80+{x}+{y}")
+        win.geometry(f"320x80+{x}+{y}")
 
-        entry = tk.Entry(win, font=("Segoe UI", 11))
-        entry.pack(fill="x", padx=8, pady=(12, 4))
+        entry_frame = tk.Frame(win)
+        entry_frame.pack(fill="x", padx=8, pady=(12, 4))
+
+        entry = tk.Entry(entry_frame, font=("Segoe UI", 11))
+        entry.pack(side="left", fill="x", expand=True)
         entry.focus_force()
 
         def submit(event=None):
@@ -383,6 +437,12 @@ class DesktopPet:
 
         entry.bind("<Return>", submit)
         entry.bind("<Escape>", lambda e: win.destroy())
+
+        if sd is not None:
+            tk.Button(
+                entry_frame, text="🎤", command=lambda: self.record_into_entry(entry)
+            ).pack(side="left", padx=(4, 0))
+
         tk.Button(win, text="Senden", command=submit).pack(pady=2)
 
         self.chat_win = win
@@ -400,6 +460,68 @@ class DesktopPet:
                 "('ollama serve' starten und ein Modell installieren)"
             )
         self.root.after(0, lambda: self.show_bubble(reply))
+
+    # ------------------------------------------------------------
+    # Sprachsteuerung (whisper.cpp tiny)
+    # ------------------------------------------------------------
+    def _record_to_tempfile(self):
+        fd, tmp_path = tempfile.mkstemp(suffix=".wav")
+        os.close(fd)
+        try:
+            record_audio(tmp_path)
+            return transcribe_audio(tmp_path)
+        finally:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+
+    def speak_to_childe(self):
+        if self.is_recording:
+            return
+        self.is_recording = True
+        self.show_bubble("🎤 Ich höre zu ...")
+        threading.Thread(target=self._speak_thread, daemon=True).start()
+
+    def _speak_thread(self):
+        try:
+            text, err = self._record_to_tempfile()
+        except Exception as e:
+            text, err = None, str(e)
+
+        self.is_recording = False
+        if not text:
+            self.root.after(0, lambda: self.show_bubble(f"🎤 {err}"))
+            return
+        self.root.after(0, lambda: self.send_message(text))
+
+    def record_into_entry(self, entry):
+        if self.is_recording:
+            return
+        self.is_recording = True
+        self.show_bubble("🎤 Ich höre zu ...")
+        threading.Thread(target=self._record_into_entry_thread, args=(entry,), daemon=True).start()
+
+    def _record_into_entry_thread(self, entry):
+        try:
+            text, err = self._record_to_tempfile()
+        except Exception as e:
+            text, err = None, str(e)
+
+        self.is_recording = False
+
+        def update():
+            self.close_bubble()
+            if text:
+                try:
+                    entry.delete(0, tk.END)
+                    entry.insert(0, text)
+                except tk.TclError:
+                    pass
+            else:
+                self.show_bubble(f"🎤 {err}")
+
+        self.root.after(0, update)
 
     def show_bubble(self, text):
         self.close_bubble()
