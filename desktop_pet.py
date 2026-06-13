@@ -3,27 +3,18 @@
 import os
 import sys
 import time
-import json
 import threading
-import subprocess
-import tempfile
-import wave
-import urllib.request
 import tkinter as tk
 import random
 from collections import deque
 from PIL import Image, ImageTk, ImageOps
 
 try:
-    import sounddevice as sd
+    from huggingface_hub import hf_hub_download
+    from llama_cpp import Llama
 except Exception:
-    sd = None
-
-try:
-    from whisper_tiny import find_whisper_exe, find_model
-except Exception:
-    find_whisper_exe = lambda: ""
-    find_model = lambda: ""
+    hf_hub_download = None
+    Llama = None
 
 PET_SIZE = 110           # Zielgröße des Pets in Pixeln (Sprites sind 128x128)
 TASKBAR_OFFSET = 40
@@ -61,10 +52,10 @@ DRAG_CYCLE = ["shime5.png", "shime6.png", "shime7.png", "shime8.png", "shime9.pn
 DRAG_WIGGLE_THRESHOLD = 0.75  # Bewegung pro Tick (Pixel), ab der die Struggle-Animation startet
 
 # ------------------------------------------------------------
-# Ollama-Anbindung (lokale KI)
+# Lokale KI (llama-cpp-python, Qwen2.5-1.5B-Instruct)
 # ------------------------------------------------------------
-OLLAMA_URL = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = os.environ.get("CHILDE_MODEL", "llama3.2")
+MODEL_REPO = "bartowski/Qwen2.5-1.5B-Instruct-GGUF"
+MODEL_FILE = "Qwen2.5-1.5B-Instruct-Q4_K_M.gguf"  # ~1 GB, wird beim ersten Start geladen
 
 CHILDE_SYSTEM_PROMPT = (
     "Du bist Childe (Tartaglia) aus Genshin Impact, als kleines Desktop-Pet. "
@@ -72,55 +63,37 @@ CHILDE_SYSTEM_PROMPT = (
     "und freundschaftlich. Antworte auf Deutsch."
 )
 
+_llm = None
+_llm_lock = threading.Lock()
 
-def ask_ollama(prompt):
-    payload = {
-        "model": OLLAMA_MODEL,
-        "prompt": prompt,
-        "system": CHILDE_SYSTEM_PROMPT,
-        "stream": False,
-    }
-    data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        OLLAMA_URL, data=data, headers={"Content-Type": "application/json"}
+
+def get_llm():
+    """Lädt das lokale Modell beim ersten Aufruf (kann etwas dauern)."""
+    global _llm
+    if Llama is None:
+        raise RuntimeError(
+            "llama-cpp-python/huggingface_hub sind nicht installiert "
+            "(siehe requirements.txt)."
+        )
+    with _llm_lock:
+        if _llm is None:
+            model_path = hf_hub_download(repo_id=MODEL_REPO, filename=MODEL_FILE)
+            _llm = Llama(model_path=model_path, n_ctx=2048, verbose=False)
+    return _llm
+
+
+def ask_childe(prompt):
+    llm = get_llm()
+    output = llm.create_chat_completion(
+        messages=[
+            {"role": "system", "content": CHILDE_SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
+        max_tokens=150,
+        repeat_penalty=1.3,
+        temperature=0.7,
     )
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        result = json.loads(resp.read().decode("utf-8"))
-    return result.get("response", "").strip() or "..."
-
-
-# ------------------------------------------------------------
-# Sprache (whisper.cpp tiny)
-# ------------------------------------------------------------
-RECORD_SECONDS = 4
-RECORD_SAMPLE_RATE = 16000
-
-
-def record_audio(path, seconds=RECORD_SECONDS, sample_rate=RECORD_SAMPLE_RATE):
-    audio = sd.rec(int(seconds * sample_rate), samplerate=sample_rate, channels=1, dtype="int16")
-    sd.wait()
-    with wave.open(path, "wb") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(sample_rate)
-        wf.writeframes(audio.tobytes())
-
-
-def transcribe_audio(path, language="de"):
-    exe = find_whisper_exe()
-    model = find_model()
-    if not exe or not model:
-        return None, "whisper.cpp wurde nicht gefunden (siehe whisper_tiny.py)."
-
-    cmd = [exe, "-m", model, "-f", path, "--no-timestamps"]
-    if language:
-        cmd += ["-l", language]
-
-    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
-    text = result.stdout.strip()
-    if result.returncode != 0 or not text:
-        return None, result.stderr.strip() or "Konnte nichts verstehen."
-    return text, None
+    return output["choices"][0]["message"]["content"].strip() or "..."
 
 
 class DesktopPet:
@@ -178,7 +151,6 @@ class DesktopPet:
         self.chat_win = None
         self.bubble_win = None
         self.bubble_after_id = None
-        self.is_recording = False
 
         self.root.geometry(f"{PET_SIZE}x{PET_SIZE}+{self.x}+{int(self.y)}")
 
@@ -396,14 +368,12 @@ class DesktopPet:
     def on_right_click(self, event):
         menu = tk.Menu(self.root, tearoff=0)
         menu.add_command(label="Mit Childe reden", command=self.open_chat)
-        if sd is not None:
-            menu.add_command(label="🎤 Mit Childe sprechen", command=self.speak_to_childe)
         menu.add_separator()
         menu.add_command(label="Beenden", command=self.root.destroy)
         menu.tk_popup(event.x_root, event.y_root)
 
     # ------------------------------------------------------------
-    # Chat mit lokaler KI (Ollama)
+    # Chat mit lokaler KI (llama-cpp-python)
     # ------------------------------------------------------------
     def open_chat(self):
         if self.chat_win is not None:
@@ -438,90 +408,23 @@ class DesktopPet:
         entry.bind("<Return>", submit)
         entry.bind("<Escape>", lambda e: win.destroy())
 
-        if sd is not None:
-            tk.Button(
-                entry_frame, text="🎤", command=lambda: self.record_into_entry(entry)
-            ).pack(side="left", padx=(4, 0))
-
         tk.Button(win, text="Senden", command=submit).pack(pady=2)
 
         self.chat_win = win
 
     def send_message(self, text):
         self.show_bubble("...")
-        threading.Thread(target=self._ask_ollama_thread, args=(text,), daemon=True).start()
+        threading.Thread(target=self._ask_llm_thread, args=(text,), daemon=True).start()
 
-    def _ask_ollama_thread(self, text):
+    def _ask_llm_thread(self, text):
         try:
-            reply = ask_ollama(text)
+            reply = ask_childe(text)
         except Exception:
             reply = (
-                "Ich kann gerade nicht antworten - läuft Ollama? "
-                "('ollama serve' starten und ein Modell installieren)"
+                "Ich kann gerade nicht antworten - das lokale Modell konnte "
+                "nicht geladen werden (siehe requirements.txt)."
             )
         self.root.after(0, lambda: self.show_bubble(reply))
-
-    # ------------------------------------------------------------
-    # Sprachsteuerung (whisper.cpp tiny)
-    # ------------------------------------------------------------
-    def _record_to_tempfile(self):
-        fd, tmp_path = tempfile.mkstemp(suffix=".wav")
-        os.close(fd)
-        try:
-            record_audio(tmp_path)
-            return transcribe_audio(tmp_path)
-        finally:
-            try:
-                os.remove(tmp_path)
-            except OSError:
-                pass
-
-    def speak_to_childe(self):
-        if self.is_recording:
-            return
-        self.is_recording = True
-        self.show_bubble("🎤 Ich höre zu ...")
-        threading.Thread(target=self._speak_thread, daemon=True).start()
-
-    def _speak_thread(self):
-        try:
-            text, err = self._record_to_tempfile()
-        except Exception as e:
-            text, err = None, str(e)
-
-        self.is_recording = False
-        if not text:
-            self.root.after(0, lambda: self.show_bubble(f"🎤 {err}"))
-            return
-        self.root.after(0, lambda: self.send_message(text))
-
-    def record_into_entry(self, entry):
-        if self.is_recording:
-            return
-        self.is_recording = True
-        self.show_bubble("🎤 Ich höre zu ...")
-        threading.Thread(target=self._record_into_entry_thread, args=(entry,), daemon=True).start()
-
-    def _record_into_entry_thread(self, entry):
-        try:
-            text, err = self._record_to_tempfile()
-        except Exception as e:
-            text, err = None, str(e)
-
-        self.is_recording = False
-
-        def update():
-            self.close_bubble()
-            if text:
-                try:
-                    entry.delete(0, tk.END)
-                    entry.insert(0, text)
-                except tk.TclError:
-                    pass
-            else:
-                self.show_bubble(f"🎤 {err}")
-
-        self.root.after(0, update)
 
     def show_bubble(self, text):
         self.close_bubble()
