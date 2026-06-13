@@ -12,17 +12,17 @@ PET_SIZE = 110           # Zielgröße des Pets in Pixeln (Sprites sind 128x128)
 TASKBAR_OFFSET = 40
 TRANSPARENT = (255, 0, 255)  # Magenta - wird im Fenster unsichtbar
 
-TICK_MS = 30             # Update-Intervall (kleiner = flüssiger)
-ANIM_EVERY = 4           # Walk-Sprite wechselt alle N Ticks
-WALK_SPEED = 0.5         # Pixel pro Tick beim Laufen
-FALL_GRAVITY = 1.5       # Beschleunigung beim Fallen (Pixel/Tick^2)
-FALL_MAX_SPEED = 22      # maximale Fallgeschwindigkeit (Pixel/Tick)
+TICK_MS = 15             # Update-Intervall (kleiner = flüssiger)
+ANIM_EVERY = 8           # Walk-Sprite wechselt alle N Ticks
+WALK_SPEED = 0.25        # Pixel pro Tick beim Laufen
+FALL_GRAVITY = 0.75      # Beschleunigung beim Fallen (Pixel/Tick^2)
+FALL_MAX_SPEED = 11      # maximale Fallgeschwindigkeit (Pixel/Tick)
 
-THROW_MIN_SPEED = 3      # ab dieser Geschwindigkeit (Pixel/Tick) gilt es als Wurf
-THROW_MAX_SPEED = 40     # Obergrenze für die Wurfgeschwindigkeit
+THROW_MIN_SPEED = 1.5    # ab dieser Geschwindigkeit (Pixel/Tick) gilt es als Wurf
+THROW_MAX_SPEED = 20     # Obergrenze für die Wurfgeschwindigkeit
 WALL_BOUNCE_DAMPING = 0.5    # Energieverlust beim Abprallen von Bildschirmrändern
 GROUND_BOUNCE_DAMPING = 0.45 # Energieverlust beim Aufprall auf dem Boden
-GROUND_BOUNCE_MIN = 1.5      # unterhalb dieser Geschwindigkeit wird nicht mehr abgeprallt
+GROUND_BOUNCE_MIN = 0.75     # unterhalb dieser Geschwindigkeit wird nicht mehr abgeprallt
 
 def resource_path(relative):
     """Pfad zu Daten-Dateien - funktioniert sowohl direkt mit Python
@@ -41,7 +41,7 @@ SIT_LOOK_UP = "shime26.png"
 FALL = "shime4.png"
 CHEER = "shime46.png"
 DRAG_CYCLE = ["shime5.png", "shime6.png", "shime7.png", "shime8.png", "shime9.png", "shime10.png"]
-DRAG_WIGGLE_THRESHOLD = 1.5  # Bewegung pro Tick (Pixel), ab der die Struggle-Animation startet
+DRAG_WIGGLE_THRESHOLD = 0.75  # Bewegung pro Tick (Pixel), ab der die Struggle-Animation startet
 
 
 class DesktopPet:

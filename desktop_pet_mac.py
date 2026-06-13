@@ -39,19 +39,19 @@ except ImportError:
 PET_SIZE = 110
 GROUND_OFFSET = 60      # Abstand vom unteren Bildschirmrand (Dock)
 
-TICK_S = 0.03            # Update-Intervall in Sekunden
-ANIM_EVERY = 4
-WALK_SPEED = 0.5
-FALL_GRAVITY = 1.5
-FALL_MAX_SPEED = 22
+TICK_S = 0.015           # Update-Intervall in Sekunden
+ANIM_EVERY = 8
+WALK_SPEED = 0.25
+FALL_GRAVITY = 0.75
+FALL_MAX_SPEED = 11
 
-THROW_MIN_SPEED = 3
-THROW_MAX_SPEED = 40
+THROW_MIN_SPEED = 1.5
+THROW_MAX_SPEED = 20
 WALL_BOUNCE_DAMPING = 0.5
 GROUND_BOUNCE_DAMPING = 0.45
-GROUND_BOUNCE_MIN = 1.5
+GROUND_BOUNCE_MIN = 0.75
 
-DRAG_WIGGLE_THRESHOLD = 1.5
+DRAG_WIGGLE_THRESHOLD = 0.75
 
 
 def resource_path(relative):
