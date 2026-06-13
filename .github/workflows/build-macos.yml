@@ -18,13 +18,17 @@ jobs:
       - name: Install dependencies
         run: |
           python3 -m pip install --upgrade pip
-          python3 -m pip install -r requirements.txt pyinstaller
+          python3 -m pip install -r requirements-mac.txt pyinstaller
 
       - name: Build app with PyInstaller
         run: |
           pyinstaller --windowed --name "ChildePet" \
             --add-data "sprites:sprites" \
-            desktop_pet.py
+            --hidden-import=AppKit \
+            --hidden-import=Foundation \
+            --hidden-import=objc \
+            --hidden-import=PyObjCTools \
+            desktop_pet_mac.py
 
       - name: Zip the app bundle
         run: |

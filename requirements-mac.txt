@@ -1,0 +1,2 @@
+pillow
+pyobjc-framework-Cocoa
