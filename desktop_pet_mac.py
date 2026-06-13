@@ -340,6 +340,7 @@ class DesktopPet(NSObject):
         else:
             self.state = "cheer"
         self.state_timer = 0
+        self.walk_frame = 0
 
     def compute_throw_velocity(self):
         """Schätzt die Wurfgeschwindigkeit (Pixel/Tick) aus der Mausbewegung
