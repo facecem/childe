@@ -62,8 +62,18 @@ class DesktopPet:
             self.root.config(bg=bg_color)
             self.root.attributes("-transparentcolor", bg_color)
 
-        self.label = tk.Label(self.root, bd=0, highlightthickness=0, bg=bg_color)
-        self.label.pack()
+        # Canvas statt Label: native Aqua-Widgets (z.B. Label) ignorieren auf
+        # macOS oft die bg-Farbe, Canvas respektiert sie zuverlässig.
+        self.canvas = tk.Canvas(
+            self.root,
+            width=PET_SIZE,
+            height=PET_SIZE,
+            bg=bg_color,
+            highlightthickness=0,
+            bd=0,
+        )
+        self.canvas.pack()
+        self.sprite_item = self.canvas.create_image(0, 0, anchor="nw")
 
         self.sprites = self.load_sprites()
 
@@ -89,10 +99,10 @@ class DesktopPet:
         self.root.geometry(f"{PET_SIZE}x{PET_SIZE}+{self.x}+{int(self.y)}")
 
         self.was_dragged = False
-        self.label.bind("<Button-1>", self.on_mouse_down)
-        self.label.bind("<B1-Motion>", self.on_mouse_drag)
-        self.label.bind("<ButtonRelease-1>", self.on_mouse_up)
-        self.label.bind("<Button-3>", self.on_right_click)
+        self.canvas.bind("<Button-1>", self.on_mouse_down)
+        self.canvas.bind("<B1-Motion>", self.on_mouse_drag)
+        self.canvas.bind("<ButtonRelease-1>", self.on_mouse_up)
+        self.canvas.bind("<Button-3>", self.on_right_click)
 
         self.update()
         self.root.mainloop()
@@ -131,8 +141,8 @@ class DesktopPet:
 
     def set_sprite(self, name):
         img = self.sprites[name][self.direction]
-        self.label.config(image=img)
-        self.label.image = img  # Referenz behalten
+        self.canvas.itemconfig(self.sprite_item, image=img)
+        self.current_image = img  # Referenz behalten
 
     # ------------------------------------------------------------
     # Verhalten / Update-Schleife
