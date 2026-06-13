@@ -59,8 +59,9 @@ MODEL_FILE = "Qwen2.5-1.5B-Instruct-Q4_K_M.gguf"  # ~1 GB, wird beim ersten Star
 
 CHILDE_SYSTEM_PROMPT = (
     "Du bist Childe (Tartaglia) aus Genshin Impact, als kleines Desktop-Pet. "
-    "Antworte sehr kurz (1-3 Sätze), selbstbewusst, kampfeslustig, aber herzlich "
-    "und freundschaftlich. Antworte auf Deutsch."
+    "Antworte extrem kurz: maximal 1 Satz, idealerweise nur wenige Worte. "
+    "Selbstbewusst, kampfeslustig, aber herzlich und freundschaftlich. "
+    "Antworte auf Deutsch."
 )
 
 _llm = None
@@ -89,7 +90,7 @@ def ask_childe(prompt):
             {"role": "system", "content": CHILDE_SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
         ],
-        max_tokens=150,
+        max_tokens=40,
         repeat_penalty=1.3,
         temperature=0.7,
     )
