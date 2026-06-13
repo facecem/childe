@@ -3,6 +3,9 @@
 import os
 import sys
 import time
+import json
+import threading
+import urllib.request
 import tkinter as tk
 import random
 from collections import deque
@@ -42,6 +45,34 @@ FALL = "shime4.png"
 CHEER = "shime46.png"
 DRAG_CYCLE = ["shime5.png", "shime6.png", "shime7.png", "shime8.png", "shime9.png", "shime10.png"]
 DRAG_WIGGLE_THRESHOLD = 0.75  # Bewegung pro Tick (Pixel), ab der die Struggle-Animation startet
+
+# ------------------------------------------------------------
+# Ollama-Anbindung (lokale KI)
+# ------------------------------------------------------------
+OLLAMA_URL = "http://localhost:11434/api/generate"
+OLLAMA_MODEL = os.environ.get("CHILDE_MODEL", "llama3.2")
+
+CHILDE_SYSTEM_PROMPT = (
+    "Du bist Childe (Tartaglia) aus Genshin Impact, als kleines Desktop-Pet. "
+    "Antworte sehr kurz (1-3 Sätze), selbstbewusst, kampfeslustig, aber herzlich "
+    "und freundschaftlich. Antworte auf Deutsch."
+)
+
+
+def ask_ollama(prompt):
+    payload = {
+        "model": OLLAMA_MODEL,
+        "prompt": prompt,
+        "system": CHILDE_SYSTEM_PROMPT,
+        "stream": False,
+    }
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        OLLAMA_URL, data=data, headers={"Content-Type": "application/json"}
+    )
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        result = json.loads(resp.read().decode("utf-8"))
+    return result.get("response", "").strip() or "..."
 
 
 class DesktopPet:
@@ -95,6 +126,10 @@ class DesktopPet:
         self.vx = 0.0
         self.vy = 0.0
         self.drag_history = deque(maxlen=5)
+
+        self.chat_win = None
+        self.bubble_win = None
+        self.bubble_after_id = None
 
         self.root.geometry(f"{PET_SIZE}x{PET_SIZE}+{self.x}+{int(self.y)}")
 
@@ -310,7 +345,112 @@ class DesktopPet:
         return vx, vy
 
     def on_right_click(self, event):
-        self.root.destroy()
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(label="Mit Childe reden", command=self.open_chat)
+        menu.add_separator()
+        menu.add_command(label="Beenden", command=self.root.destroy)
+        menu.tk_popup(event.x_root, event.y_root)
+
+    # ------------------------------------------------------------
+    # Chat mit lokaler KI (Ollama)
+    # ------------------------------------------------------------
+    def open_chat(self):
+        if self.chat_win is not None:
+            try:
+                self.chat_win.destroy()
+            except tk.TclError:
+                pass
+
+        win = tk.Toplevel(self.root)
+        win.title("Mit Childe reden")
+        win.attributes("-topmost", True)
+        win.resizable(False, False)
+
+        x = int(self.x)
+        y = max(0, int(self.y) - 90)
+        win.geometry(f"280x80+{x}+{y}")
+
+        entry = tk.Entry(win, font=("Segoe UI", 11))
+        entry.pack(fill="x", padx=8, pady=(12, 4))
+        entry.focus_force()
+
+        def submit(event=None):
+            text = entry.get().strip()
+            if text:
+                win.destroy()
+                self.chat_win = None
+                self.send_message(text)
+
+        entry.bind("<Return>", submit)
+        entry.bind("<Escape>", lambda e: win.destroy())
+        tk.Button(win, text="Senden", command=submit).pack(pady=2)
+
+        self.chat_win = win
+
+    def send_message(self, text):
+        self.show_bubble("...")
+        threading.Thread(target=self._ask_ollama_thread, args=(text,), daemon=True).start()
+
+    def _ask_ollama_thread(self, text):
+        try:
+            reply = ask_ollama(text)
+        except Exception:
+            reply = (
+                "Ich kann gerade nicht antworten - läuft Ollama? "
+                "('ollama serve' starten und ein Modell installieren)"
+            )
+        self.root.after(0, lambda: self.show_bubble(reply))
+
+    def show_bubble(self, text):
+        self.close_bubble()
+
+        win = tk.Toplevel(self.root)
+        win.overrideredirect(True)
+        win.attributes("-topmost", True)
+
+        label = tk.Label(
+            win,
+            text=text,
+            font=("Segoe UI", 10),
+            bg="#fffdf5",
+            fg="#222222",
+            wraplength=220,
+            justify="left",
+            padx=10,
+            pady=8,
+            relief="solid",
+            bd=1,
+        )
+        label.pack()
+
+        win.update_idletasks()
+        w = win.winfo_width()
+        h = win.winfo_height()
+        x = int(self.x + PET_SIZE / 2 - w / 2)
+        y = int(self.y) - h - 6
+        x = max(0, min(x, self.screen_w - w))
+        y = max(0, y)
+        win.geometry(f"+{x}+{y}")
+
+        win.bind("<Button-1>", lambda e: self.close_bubble())
+        label.bind("<Button-1>", lambda e: self.close_bubble())
+
+        self.bubble_win = win
+
+        if text != "...":
+            duration = max(3000, min(15000, len(text) * 70))
+            self.bubble_after_id = self.root.after(duration, self.close_bubble)
+
+    def close_bubble(self):
+        if self.bubble_after_id is not None:
+            self.root.after_cancel(self.bubble_after_id)
+            self.bubble_after_id = None
+        if self.bubble_win is not None:
+            try:
+                self.bubble_win.destroy()
+            except tk.TclError:
+                pass
+            self.bubble_win = None
 
 
 if __name__ == "__main__":
