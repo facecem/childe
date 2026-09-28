@@ -172,7 +172,7 @@
       wvAufgaben: ['Zahlungseingang prüfen', 'Rückruf Mieter', 'Rückmeldung Handwerker?', 'Mit Chef besprechen', 'Unterlagen angefordert – eingegangen?', 'Anwalt: Sachstand'],
       meinSB: 'Cem', ohneSbZeigen: true,
       startTab: 'dashboard', dashZeit: 'faellig', tabs: ['dashboard', 'opos', 'ih', 'kaution', 'stamm', 'kontakte'],
-      kacheln: ['ueber', 'heute', 'w7', 'opos', 'ih', 'kaution', 'rueck', 'verj'],
+      kacheln: ['flag', 'ueber', 'heute', 'w7', 'opos', 'ih', 'kaution', 'rueck', 'verj'],
       akzent: '#1f5fa8', kopf: '#15385f', schrift: 14.5, kompakt: false, verjaehrungWarnTage: 30,
       gewerke: ['Sanitär', 'Heizung', 'Elektro', 'Dach', 'Maler', 'Schreiner/Tischler', 'Schlüsseldienst', 'Glaser', 'Rohrreinigung',
         'Schädlingsbekämpfung', 'Fenster/Türen', 'Bodenleger', 'Garten', 'Reinigung', 'Aufzug', 'Sonstiges']
@@ -209,6 +209,7 @@
     out.vorlagen = d.vorlagen && typeof d.vorlagen === 'object' ? d.vorlagen : {};
     out.meta = Object.assign({ lastBackup: null, erstellt: today() }, d.meta || {});
     if (!(d.meta && d.meta.takt)) out.meta.takt = 1;
+    if (!out.meta.schritte) { schrittAusWV(out); out.meta.schritte = 1; if (!out.settings.ui.kacheln.includes('flag')) out.settings.ui.kacheln.unshift('flag'); }
     out.opos.forEach(f => { f.posten = f.posten || []; f.raten = f.raten || []; });
     out.ih.forEach(f => { f.angebote = f.angebote || []; f.fotos = f.fotos || []; f.anfragen = f.anfragen || []; });
     out.kaution.forEach(f => { f.einbehalte = f.einbehalte || []; });
@@ -524,6 +525,44 @@
     }
   }
 
+  /* ---------- Pflicht: jeder offene Vorgang hat einen nächsten Schritt und eine offene WV ---------- */
+  function vorgangAktiv(bereich, f) {
+    if (!f) return false;
+    if (bereich === 'opos') return f.stufe !== 'erledigt';
+    if (bereich === 'ih') return f.status !== 'abgerechnet' && !(f.status === 'erledigt' && f.quelle === 'ih-liste');
+    if (bereich === 'kaution') return f.status !== 'ausgezahlt';
+    return false;
+  }
+  function vorgangPruefen(data, bereich, f) {
+    const wv = data.wv.filter(w => w.bereich === bereich && w.refId === f.id && w.status === 'offen');
+    const ohneWV = !wv.length, ohneSchritt = !String(f.naechsterSchritt || '').trim();
+    return { ohneWV, ohneSchritt, geflaggt: vorgangAktiv(bereich, f) && (ohneWV || ohneSchritt) };
+  }
+  /** Alle offenen Vorgänge ohne nächsten Schritt oder ohne WV */
+  function geflaggt(data) {
+    const out = [];
+    Object.keys(BEREICHE).forEach(b => (data[b] || []).forEach(f => { const p = vorgangPruefen(data, b, f); if (p.geflaggt) out.push(Object.assign({ bereich: b, fall: f }, p)); }));
+    return out;
+  }
+  /** Nächsten Schritt + WV setzen (optional eine WV dabei erledigen) */
+  function schrittSetzen(data, bereich, id, schritt, datum, o = {}) {
+    const f = findFall(data, bereich, id); if (!f) return null;
+    const h = o.heute || today();
+    if (o.erledigeWV) completeWV(data, o.erledigeWV, h);
+    f.naechsterSchritt = String(schritt || '').trim();
+    const w = datum ? createWV(data, bereich, id, datum, f.naechsterSchritt || 'Wiedervorlage', { erstelltDurch: 'manuell', heute: h }) : null;
+    addVerlauf(data, bereich, id, 'schritt', 'Nächster Schritt: ' + (f.naechsterSchritt || '–') + (w ? ' (WV ' + fmtDatum(w.datum) + ')' : ''), h);
+    return w;
+  }
+  /** Einmalig: bei OPOS/Kaution den nächsten Schritt aus der ersten offenen WV übernehmen */
+  function schrittAusWV(data) {
+    ['opos', 'kaution'].forEach(b => (data[b] || []).forEach(f => {
+      if (String(f.naechsterSchritt || '').trim()) return;
+      const w = data.wv.filter(x => x.bereich === b && x.refId === f.id && x.status === 'offen').sort((a, c) => a.datum.localeCompare(c.datum))[0];
+      if (w) f.naechsterSchritt = w.aufgabe;
+    }));
+  }
+
   function fallListe(data, bereich) { return data[bereich]; }
   function findFall(data, bereich, id) { return (fallListe(data, bereich) || []).find(x => x.id === id); }
 
@@ -550,6 +589,8 @@
         if (aktion === 'ausgezahlt') { fall.status = 'ausgezahlt'; fall.auszahlungAm = h; }
       }
     }
+    // nächster Schritt = Aufgabe der ersten neuen WV (bzw. leer, wenn der Vorgang abgeschlossen ist)
+    if (fall) { if (neu.length) fall.naechsterSchritt = neu.slice().sort((a, b) => a.datum.localeCompare(b.datum))[0].aufgabe; else if (!vorgangAktiv(bereich, fall)) fall.naechsterSchritt = ''; }
     const label = (AKTIONEN[bereich] && AKTIONEN[bereich][aktion]) || aktion;
     addVerlauf(data, bereich, refId, aktion, ctx.verlaufText || (label + (regel.frist ? ' (Frist ' + fmtDatum(regel.frist) + ')' : '')), h);
     return { frist: regel.frist, neu, geschlossen };
@@ -862,7 +903,7 @@
         fall = { id: uid(), mieterId: m.id, stufe: 'neu', posten: [], raten: [], notiz: '', angelegt: heute };
         data.opos.push(fall); st.faelleNeu++;
         addVerlauf(data, 'opos', fall.id, 'import', 'Fall aus OPOS-Liste angelegt (Saldo ' + fmtEUR(e.saldo) + ', Stand ' + fmtDatum(stand) + ')', heute);
-        if (o.pruefWV) createWV(data, 'opos', fall.id, heute, 'Importierten Fall prüfen – Zahlungserinnerung versenden?', { regel: 'opos:neu', heute });
+        if (o.pruefWV) { createWV(data, 'opos', fall.id, heute, 'Importierten Fall prüfen – Zahlungserinnerung versenden?', { regel: 'opos:neu', heute }); fall.naechsterSchritt = 'Importierten Fall prüfen – mahnen?'; }
       }
       const bez = 'Saldo lt. OPOS-Liste (Stand ' + fmtDatum(stand) + ')';
       let sp = fall.posten.find(p => p.saldo);
@@ -1181,7 +1222,7 @@
         if (!(kt.saldo >= min)) { if (kt.saldo < 0) st.guthaben++; else st.uebersprungen++; return; }
         fall = { id: uid(), mieterId: m.id, stufe: 'neu', posten: [], raten: [], notiz: '', angelegt: heute };
         data.opos.push(fall); st.faelleNeu++;
-        if (o.pruefWV) createWV(data, 'opos', fall.id, heute, 'Importierten Fall prüfen – Mahnen?', { regel: 'opos:neu', heute });
+        if (o.pruefWV) { createWV(data, 'opos', fall.id, heute, 'Importierten Fall prüfen – Mahnen?', { regel: 'opos:neu', heute }); fall.naechsterSchritt = 'Importierten Fall prüfen – mahnen?'; }
       }
       const vorher = offenSumme(fall.posten);
       fall.posten = fall.posten.filter(p => !p.saldo && !p.quelle);
@@ -1483,7 +1524,7 @@
     mieterName, briefanrede,
     defaultSettings, emptyData, normalize, migratePrototype, stufeAusText,
     offenSumme, kuendigungsCheck, verteileZahlung, kautionsabrechnung, verjaehrung, kautionAmpel, ratenplan,
-    monateText, defaultEmail, taktUmstellen, wvDatum, createWV, completeWV, snoozeWV, setWVDatum, plusEinheit, WV_EINHEITEN, defaultUI, closeWV, offeneWV, addVerlauf, wvRegeln, applyAction, findFall,
+    monateText, defaultEmail, taktUmstellen, vorgangAktiv, vorgangPruefen, geflaggt, schrittSetzen, schrittAusWV, wvDatum, createWV, completeWV, snoozeWV, setWVDatum, plusEinheit, WV_EINHEITEN, defaultUI, closeWV, offeneWV, addVerlauf, wvRegeln, applyAction, findFall,
     getPath, vorlageZuHTML, vorlageZuText,
     parseCSV, guessMapping, typAusText, importOPOS, normName, nameAufteilen, parseMietzeit, parseSaldo, parseWV, erkenneFormat, titelMieter, parseJsonBlatt, parseSaldenBlatt, findeMieter, saldoAbgleich, importSalden, parseTelefonliste, importTelefonliste, parseOposPdf, importOposPdf, nettoPosten, pdfUmlaute, typAusBuchung, monatsmieteSchaetzen, kwMontag, parseTermin, parseIhListe, adresseTeile, objektFinden, importIhListe, sstLesen, zeileLesen, listenZeileFinden, zelleSetzen, datumsStil, excelAenderungen, excelBlattAktualisieren, excelGeschrieben, spalteBuchstabe, datumSerial, adresseZuMieter, emailsZuMieter, adressbuchVerknuepfen, whgNr, asciiDateiname, buildEML
   };

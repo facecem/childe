@@ -159,6 +159,11 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
 .multi.liste{grid-template-columns:1fr;gap:0;padding:0} .multi.liste label{display:flex;gap:8px;padding:4px 8px;border-bottom:1px solid var(--line2)} .multi.liste label:hover{background:var(--pri-soft)} .multi.liste b{margin-left:auto;white-space:nowrap}
 .card.naechster{border-left:4px solid var(--pri)} .card.naechster dl.kv{margin:0 0 8px}
 
+/* Pflicht: nächster Schritt + WV */
+.banner.flag{background:#fff1f0;border:1px solid #f3b9b3} .flagicon{color:var(--rot);font-weight:700}
+.kachel.flag{border-color:#f3b9b3;background:#fff1f0} .kachel.flag b{color:var(--rot)}
+.schrittzeile{margin:0 0 12px;padding:8px 12px;background:var(--card);border:1px solid var(--line);border-left:4px solid var(--pri);border-radius:var(--r)}
+
 </style>
 </head>
 <body>
@@ -347,7 +352,7 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
       wvAufgaben: ['Zahlungseingang prüfen', 'Rückruf Mieter', 'Rückmeldung Handwerker?', 'Mit Chef besprechen', 'Unterlagen angefordert – eingegangen?', 'Anwalt: Sachstand'],
       meinSB: 'Cem', ohneSbZeigen: true,
       startTab: 'dashboard', dashZeit: 'faellig', tabs: ['dashboard', 'opos', 'ih', 'kaution', 'stamm', 'kontakte'],
-      kacheln: ['ueber', 'heute', 'w7', 'opos', 'ih', 'kaution', 'rueck', 'verj'],
+      kacheln: ['flag', 'ueber', 'heute', 'w7', 'opos', 'ih', 'kaution', 'rueck', 'verj'],
       akzent: '#1f5fa8', kopf: '#15385f', schrift: 14.5, kompakt: false, verjaehrungWarnTage: 30,
       gewerke: ['Sanitär', 'Heizung', 'Elektro', 'Dach', 'Maler', 'Schreiner/Tischler', 'Schlüsseldienst', 'Glaser', 'Rohrreinigung',
         'Schädlingsbekämpfung', 'Fenster/Türen', 'Bodenleger', 'Garten', 'Reinigung', 'Aufzug', 'Sonstiges']
@@ -384,6 +389,7 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
     out.vorlagen = d.vorlagen && typeof d.vorlagen === 'object' ? d.vorlagen : {};
     out.meta = Object.assign({ lastBackup: null, erstellt: today() }, d.meta || {});
     if (!(d.meta && d.meta.takt)) out.meta.takt = 1;
+    if (!out.meta.schritte) { schrittAusWV(out); out.meta.schritte = 1; if (!out.settings.ui.kacheln.includes('flag')) out.settings.ui.kacheln.unshift('flag'); }
     out.opos.forEach(f => { f.posten = f.posten || []; f.raten = f.raten || []; });
     out.ih.forEach(f => { f.angebote = f.angebote || []; f.fotos = f.fotos || []; f.anfragen = f.anfragen || []; });
     out.kaution.forEach(f => { f.einbehalte = f.einbehalte || []; });
@@ -699,6 +705,44 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
     }
   }
 
+  /* ---------- Pflicht: jeder offene Vorgang hat einen nächsten Schritt und eine offene WV ---------- */
+  function vorgangAktiv(bereich, f) {
+    if (!f) return false;
+    if (bereich === 'opos') return f.stufe !== 'erledigt';
+    if (bereich === 'ih') return f.status !== 'abgerechnet' && !(f.status === 'erledigt' && f.quelle === 'ih-liste');
+    if (bereich === 'kaution') return f.status !== 'ausgezahlt';
+    return false;
+  }
+  function vorgangPruefen(data, bereich, f) {
+    const wv = data.wv.filter(w => w.bereich === bereich && w.refId === f.id && w.status === 'offen');
+    const ohneWV = !wv.length, ohneSchritt = !String(f.naechsterSchritt || '').trim();
+    return { ohneWV, ohneSchritt, geflaggt: vorgangAktiv(bereich, f) && (ohneWV || ohneSchritt) };
+  }
+  /** Alle offenen Vorgänge ohne nächsten Schritt oder ohne WV */
+  function geflaggt(data) {
+    const out = [];
+    Object.keys(BEREICHE).forEach(b => (data[b] || []).forEach(f => { const p = vorgangPruefen(data, b, f); if (p.geflaggt) out.push(Object.assign({ bereich: b, fall: f }, p)); }));
+    return out;
+  }
+  /** Nächsten Schritt + WV setzen (optional eine WV dabei erledigen) */
+  function schrittSetzen(data, bereich, id, schritt, datum, o = {}) {
+    const f = findFall(data, bereich, id); if (!f) return null;
+    const h = o.heute || today();
+    if (o.erledigeWV) completeWV(data, o.erledigeWV, h);
+    f.naechsterSchritt = String(schritt || '').trim();
+    const w = datum ? createWV(data, bereich, id, datum, f.naechsterSchritt || 'Wiedervorlage', { erstelltDurch: 'manuell', heute: h }) : null;
+    addVerlauf(data, bereich, id, 'schritt', 'Nächster Schritt: ' + (f.naechsterSchritt || '–') + (w ? ' (WV ' + fmtDatum(w.datum) + ')' : ''), h);
+    return w;
+  }
+  /** Einmalig: bei OPOS/Kaution den nächsten Schritt aus der ersten offenen WV übernehmen */
+  function schrittAusWV(data) {
+    ['opos', 'kaution'].forEach(b => (data[b] || []).forEach(f => {
+      if (String(f.naechsterSchritt || '').trim()) return;
+      const w = data.wv.filter(x => x.bereich === b && x.refId === f.id && x.status === 'offen').sort((a, c) => a.datum.localeCompare(c.datum))[0];
+      if (w) f.naechsterSchritt = w.aufgabe;
+    }));
+  }
+
   function fallListe(data, bereich) { return data[bereich]; }
   function findFall(data, bereich, id) { return (fallListe(data, bereich) || []).find(x => x.id === id); }
 
@@ -725,6 +769,8 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
         if (aktion === 'ausgezahlt') { fall.status = 'ausgezahlt'; fall.auszahlungAm = h; }
       }
     }
+    // nächster Schritt = Aufgabe der ersten neuen WV (bzw. leer, wenn der Vorgang abgeschlossen ist)
+    if (fall) { if (neu.length) fall.naechsterSchritt = neu.slice().sort((a, b) => a.datum.localeCompare(b.datum))[0].aufgabe; else if (!vorgangAktiv(bereich, fall)) fall.naechsterSchritt = ''; }
     const label = (AKTIONEN[bereich] && AKTIONEN[bereich][aktion]) || aktion;
     addVerlauf(data, bereich, refId, aktion, ctx.verlaufText || (label + (regel.frist ? ' (Frist ' + fmtDatum(regel.frist) + ')' : '')), h);
     return { frist: regel.frist, neu, geschlossen };
@@ -1037,7 +1083,7 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
         fall = { id: uid(), mieterId: m.id, stufe: 'neu', posten: [], raten: [], notiz: '', angelegt: heute };
         data.opos.push(fall); st.faelleNeu++;
         addVerlauf(data, 'opos', fall.id, 'import', 'Fall aus OPOS-Liste angelegt (Saldo ' + fmtEUR(e.saldo) + ', Stand ' + fmtDatum(stand) + ')', heute);
-        if (o.pruefWV) createWV(data, 'opos', fall.id, heute, 'Importierten Fall prüfen – Zahlungserinnerung versenden?', { regel: 'opos:neu', heute });
+        if (o.pruefWV) { createWV(data, 'opos', fall.id, heute, 'Importierten Fall prüfen – Zahlungserinnerung versenden?', { regel: 'opos:neu', heute }); fall.naechsterSchritt = 'Importierten Fall prüfen – mahnen?'; }
       }
       const bez = 'Saldo lt. OPOS-Liste (Stand ' + fmtDatum(stand) + ')';
       let sp = fall.posten.find(p => p.saldo);
@@ -1356,7 +1402,7 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
         if (!(kt.saldo >= min)) { if (kt.saldo < 0) st.guthaben++; else st.uebersprungen++; return; }
         fall = { id: uid(), mieterId: m.id, stufe: 'neu', posten: [], raten: [], notiz: '', angelegt: heute };
         data.opos.push(fall); st.faelleNeu++;
-        if (o.pruefWV) createWV(data, 'opos', fall.id, heute, 'Importierten Fall prüfen – Mahnen?', { regel: 'opos:neu', heute });
+        if (o.pruefWV) { createWV(data, 'opos', fall.id, heute, 'Importierten Fall prüfen – Mahnen?', { regel: 'opos:neu', heute }); fall.naechsterSchritt = 'Importierten Fall prüfen – mahnen?'; }
       }
       const vorher = offenSumme(fall.posten);
       fall.posten = fall.posten.filter(p => !p.saldo && !p.quelle);
@@ -1658,7 +1704,7 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
     mieterName, briefanrede,
     defaultSettings, emptyData, normalize, migratePrototype, stufeAusText,
     offenSumme, kuendigungsCheck, verteileZahlung, kautionsabrechnung, verjaehrung, kautionAmpel, ratenplan,
-    monateText, defaultEmail, taktUmstellen, wvDatum, createWV, completeWV, snoozeWV, setWVDatum, plusEinheit, WV_EINHEITEN, defaultUI, closeWV, offeneWV, addVerlauf, wvRegeln, applyAction, findFall,
+    monateText, defaultEmail, taktUmstellen, vorgangAktiv, vorgangPruefen, geflaggt, schrittSetzen, schrittAusWV, wvDatum, createWV, completeWV, snoozeWV, setWVDatum, plusEinheit, WV_EINHEITEN, defaultUI, closeWV, offeneWV, addVerlauf, wvRegeln, applyAction, findFall,
     getPath, vorlageZuHTML, vorlageZuText,
     parseCSV, guessMapping, typAusText, importOPOS, normName, nameAufteilen, parseMietzeit, parseSaldo, parseWV, erkenneFormat, titelMieter, parseJsonBlatt, parseSaldenBlatt, findeMieter, saldoAbgleich, importSalden, parseTelefonliste, importTelefonliste, parseOposPdf, importOposPdf, nettoPosten, pdfUmlaute, typAusBuchung, monatsmieteSchaetzen, kwMontag, parseTermin, parseIhListe, adresseTeile, objektFinden, importIhListe, sstLesen, zeileLesen, listenZeileFinden, zelleSetzen, datumsStil, excelAenderungen, excelBlattAktualisieren, excelGeschrieben, spalteBuchstabe, datumSerial, adresseZuMieter, emailsZuMieter, adressbuchVerknuepfen, whgNr, asciiDateiname, buildEML
   };
@@ -2627,18 +2673,17 @@ Mit freundlichen Grüßen
       const n = v.datum ? C.setWVDatum(App.data, w.id, v.datum) : C.snoozeWV(App.data, w.id, v.anzahl, C.today(), v.einheit);
       App.commit(); toast('WV verschoben auf ' + fmtDatum(n.datum) + '.');
     },
-    wvDone(ds) { C.completeWV(App.data, ds.id); App.commit(); },
-    wvReopen(ds) { const w = App.data.wv.find(x => x.id === ds.id); if (w) { w.status = 'offen'; delete w.erledigtAm; App.commit(); } },
-    async wvDoneNeu(ds) {
+    async wvDone(ds) {
       const w = App.data.wv.find(x => x.id === ds.id); if (!w) return;
-      const v = await formModal('Erledigt + neue WV', [
-        { k: 'datum', l: 'Neue WV am', t: 'date', req: true, d: C.addDays(C.today(), UI().neuWvTage) },
-        { k: 'aufgabe', l: 'Aufgabe', req: true, full: true, d: w.aufgabe, list: 'dl_wvAufgaben' }], {}, { ok: 'Anlegen', outro: aufgabenListe() });
-      if (!v) return;
+      const f = H.fall(w.bereich, w.refId);
+      const letzte = f && C.vorgangAktiv(w.bereich, f) && !App.data.wv.some(x => x.id !== w.id && x.bereich === w.bereich && x.refId === w.refId && x.status === 'offen');
+      if (letzte) return App.weiter(w.bereich, w.refId, { wv: w, titel: 'WV erledigt – wie geht es weiter?' });
       C.completeWV(App.data, w.id);
-      const n = C.createWV(App.data, w.bereich, w.refId, v.datum, v.aufgabe, { erstelltDurch: 'manuell' });
-      App.commit(); if (n.datum !== v.datum) toast('WV auf nächsten Werktag gelegt: ' + fmtDatum(n.datum), 'warn');
+      // nächster Schritt rückt auf die nächste offene WV nach
+      if (f && f.naechsterSchritt === w.aufgabe) { const n = C.offeneWV(App.data, w.bereich, w.refId)[0]; if (n) f.naechsterSchritt = n.aufgabe; }
+      App.commit();
     },
+    wvDoneNeu(ds) { const w = App.data.wv.find(x => x.id === ds.id); if (w) return App.weiter(w.bereich, w.refId, { wv: w, titel: 'Erledigt + wie geht es weiter?' }); },
     async wvNeu(ds) {
       const bereiche = [['opos', 'OPOS'], ['ih', 'Instandhaltung'], ['kaution', 'Kaution']];
       let b = ds.b, id = ds.id;
@@ -2654,6 +2699,7 @@ Mit freundlichen Grüßen
         { k: 'aufgabe', l: 'Aufgabe', req: true, full: true, list: 'dl_wvAufgaben', ph: 'Vorschlag wählen oder frei eingeben' }], {}, { outro: aufgabenListe() });
       if (!v) return;
       const n = C.createWV(App.data, b, id, v.datum, v.aufgabe, { erstelltDurch: 'manuell' });
+      const fz = H.fall(b, id); if (fz && !String(fz.naechsterSchritt || '').trim()) fz.naechsterSchritt = v.aufgabe;
       App.commit(); toast('WV angelegt für ' + fmtDatum(n.datum) + '.');
     },
     async verlaufNotiz(ds) {
@@ -2661,6 +2707,54 @@ Mit freundlichen Grüßen
       if (!v) return; C.addVerlauf(App.data, ds.b, ds.id, 'notiz', v.text, v.datum); App.commit();
     }
   });
+
+  /* ---------- Pflicht: nächster Schritt + WV ---------- */
+  const SCHRITT_VORSCHLAEGE = {
+    opos: ['Zahlungseingang prüfen', 'Mieter anrufen', '✉ Mahnen', 'Letzte Mahnung', 'Ratenzahlung nachhalten', 'Kündigung prüfen', 'Sachstand Anwalt', 'Mit Chef besprechen'],
+    ih: ['Handwerker anfragen', 'Angebot nachfassen', 'Angebot prüfen / beauftragen', 'Termin mit Mieter vereinbaren', 'Ausführung prüfen', 'Rechnung prüfen', 'Mieter anrufen', 'Mit Chef besprechen'],
+    kaution: ['Übergabeprotokoll prüfen', 'Schäden/Kosten ermitteln', 'Bankverbindung anfordern', 'Kautionsabrechnung erstellen', 'Auszahlung veranlassen', 'NK-Abrechnung abwarten']
+  };
+  /** Dialog: nächsten Schritt + WV festlegen (Pflicht für jeden offenen Vorgang). o: { wv (wird erledigt), titel } */
+  App.weiter = async function (b, id, o = {}) {
+    const f = H.fall(b, id); if (!f) return false;
+    const vorschlaege = Array.from(new Set([...(SCHRITT_VORSCHLAEGE[b] || []), ...(UI().wvAufgaben || [])]));
+    const chips = [1, 2, 3, 4, 7, 14].map(n => '<button type="button" class="s" data-plus="' + n + '">+' + n + '</button>').join('');
+    const abschluss = b === 'opos' ? 'Fall erledigt' : b === 'ih' ? 'Aufgabe erledigt' : '';
+    const v = await formModal(o.titel || 'Nächster Schritt + WV', [
+      { k: 'html', t: 'html', html: '<p class="muted"><b>' + esc(H.fallLabel(b, f)) + '</b>' + (o.wv ? '<br>erledigt: ' + esc(o.wv.aufgabe) : '') + '</p>' },
+      { k: 'schritt', l: 'Nächster Schritt', req: true, full: true, list: 'dl_schritt', ph: 'Was ist als Nächstes zu tun?' },
+      { k: 'datum', l: 'WV am', t: 'date', req: true, hint: '<span class="chips">' + chips + '</span>' },
+      { k: 'html2', t: 'html', html: '<datalist id="dl_schritt">' + vorschlaege.map(x => '<option value="' + esc(x) + '">').join('') + '</datalist>' }
+    ], { schritt: o.wv ? '' : (f.naechsterSchritt || ''), datum: C.addDays(C.today(), UI().neuWvTage) }, {
+      ok: o.wv ? '✓ Erledigt + WV anlegen' : 'Speichern',
+      extra: [...(abschluss ? [{ label: '✓ ' + abschluss, value: 'abschluss', cls: 'ghost' }] : []), ...(o.wv ? [{ label: 'Nur erledigen (⚑ geflaggt)', value: 'nur', cls: 'ghost' }] : [])],
+      onOpen(d) {
+        d.querySelectorAll('[data-plus]').forEach(x => { x.onclick = () => { d.querySelector('[name=datum]').value = C.addDays(C.today(), +x.dataset.plus); }; });
+        d.querySelectorAll('footer button[value=abschluss], footer button[value=nur]').forEach(x => { x.dataset.noval = ''; });
+      }
+    });
+    if (!v) return false;
+    if (v._action === 'nur') { C.completeWV(App.data, o.wv.id); App.commit(); toast('Erledigt – der Vorgang ist jetzt ⚑ geflaggt (kein nächster Schritt / keine WV).', 'warn', 7000); return true; }
+    if (v._action === 'abschluss') {
+      if (o.wv) C.completeWV(App.data, o.wv.id);
+      if (b === 'opos') C.applyAction(App.data, 'opos', id, 'erledigt', {});
+      if (b === 'ih') { f.status = 'erledigt'; f.naechsterSchritt = ''; C.closeWV(App.data, 'ih', id); App.data.wv.forEach(w => { if (w.bereich === 'ih' && w.refId === id && w.status === 'offen') { w.status = 'erledigt'; w.erledigtAm = C.today(); } }); C.addVerlauf(App.data, 'ih', id, 'erledigt', 'Aufgabe erledigt'); }
+      App.commit(); toast('Vorgang abgeschlossen.'); return true;
+    }
+    const w = C.schrittSetzen(App.data, b, id, v.schritt, v.datum, { erledigeWV: o.wv && o.wv.id });
+    App.commit(); toast('Nächster Schritt gesetzt – WV ' + fmtDatum(w.datum) + '.');
+    return true;
+  };
+  App.act.weiter = ds => App.weiter(ds.b, ds.id);
+  /** Hinweis-Banner im Vorgang, wenn Schritt oder WV fehlt */
+  App.flagBanner = function (b, f) {
+    const p = C.vorgangPruefen(App.data, b, f); if (!p.geflaggt) return '';
+    return '<div class="banner flag">⚑ <b>Es fehlt ' + [p.ohneSchritt ? 'der nächste Schritt' : '', p.ohneWV ? 'eine Wiedervorlage' : ''].filter(Boolean).join(' und ') + '.</b> Jeder offene Vorgang braucht beides. ' +
+      '<button class="primary" data-act="weiter" data-b="' + b + '" data-id="' + f.id + '">➜ Nächsten Schritt + WV festlegen</button></div>';
+  };
+  App.flagIcon = (b, f) => (C.vorgangPruefen(App.data, b, f).geflaggt ? ' <span class="flagicon" title="kein nächster Schritt oder keine WV">⚑</span>' : '');
+  App.schrittZeile = (b, f) => '<div class="schrittzeile"><span class="muted">Nächster Schritt:</span> ' + (String(f.naechsterSchritt || '').trim() ? '<b>' + esc(f.naechsterSchritt) + '</b>' : '<span class="rot-t">– fehlt –</span>') +
+    ' <button class="s" data-act="weiter" data-b="' + b + '" data-id="' + f.id + '">ändern</button></div>';
 
   /* ---------- Dokument: Vorschau + Export + Verbuchen ---------- */
   /**
@@ -2736,6 +2830,7 @@ Mit freundlichen Grüßen
       const vt = Number(UI().verjaehrungWarnTage) || 30;
       const kVerj = d.kaution.filter(k => k.status !== 'ausgezahlt' && (C.verjaehrung(k) || { restTage: 9999 }).restTage < vt);
       const zeig = UI().kacheln || [];
+      const flags = C.geflaggt(d).filter(x => f.alleSB || x.bereich !== 'ih' || App.istMeine({ bereich: 'ih', refId: x.fall.id }));
       let list = offen;
       if (f.zeit === 'ueber') list = list.filter(w => w.datum < t);
       else if (f.zeit === 'heute') list = list.filter(w => w.datum === t);
@@ -2751,7 +2846,8 @@ Mit freundlichen Grüßen
       return (backupAlt && (d.opos.length + d.ih.length + d.kaution.length) ? '<div class="banner warn">💾 ' + (lb ? 'Letztes Backup am ' + fmtDatum(lb) + '.' : 'Noch kein Backup erstellt.') +
         ' Die Daten liegen nur in diesem Browser – bitte wöchentlich sichern. <button data-act="backupExport">Jetzt Backup speichern</button></div>' : '') +
         '<div class="kacheln">' +
-        [['ueber', () => kachel(cnt.ueber, 'überfällig', cnt.ueber ? 'rot' : '', 'data-act="dashZeit" data-z="ueber"')],
+        [['flag', () => kachel('⚑ ' + flags.length, 'ohne nächsten Schritt / WV', flags.length ? 'flag' : '', 'data-act="dashZeit" data-z="flag"')],
+         ['ueber', () => kachel(cnt.ueber, 'überfällig', cnt.ueber ? 'rot' : '', 'data-act="dashZeit" data-z="ueber"')],
          ['heute', () => kachel(cnt.heute, 'heute fällig', cnt.heute ? 'gelb' : '', 'data-act="dashZeit" data-z="heute"')],
          ['w7', () => kachel(cnt.w7, 'in 7 Tagen', '', 'data-act="dashZeit" data-z="7"')],
          ['opos', () => kachel(offen.filter(w => w.bereich === 'opos').length, 'WV OPOS', 'b-opos', 'data-act="dashBereich" data-b="opos"')],
@@ -2762,15 +2858,25 @@ Mit freundlichen Grüßen
           .filter(([k]) => zeig.includes(k)).map(([, f2]) => f2()).join('') +
         '</div>' +
         '<section class="card"><div class="toolbar"><h2>Wiedervorlagen</h2>' +
-        '<select data-filter="dash.zeit">' + [['faellig', 'fällig (bis heute)'], ['ueber', 'überfällig'], ['heute', 'heute'], ['7', 'nächste 7 Tage'], ['30', 'nächste 30 Tage'], ['alle', 'alle offenen'], ['erledigt', 'erledigte']]
+        '<select data-filter="dash.zeit">' + [['flag', '⚑ ohne Schritt / WV (' + flags.length + ')'], ['faellig', 'fällig (bis heute)'], ['ueber', 'überfällig'], ['heute', 'heute'], ['7', 'nächste 7 Tage'], ['30', 'nächste 30 Tage'], ['alle', 'alle offenen'], ['erledigt', 'erledigte']]
           .map(([v, l]) => '<option value="' + v + '"' + (f.zeit === v ? ' selected' : '') + '>' + l + '</option>').join('') + '</select>' +
         '<select data-filter="dash.bereich"><option value="">alle Bereiche</option>' + Object.entries(C.BEREICHE).map(([v, l]) => '<option value="' + v + '"' + (f.bereich === v ? ' selected' : '') + '>' + l + '</option>').join('') + '</select>' +
         (UI().meinSB ? '<select data-change="dashSB"><option value="">nur meine (' + esc(UI().meinSB) + ')</option><option value="1"' + (f.alleSB ? ' selected' : '') + '>alle Sachbearbeiter</option></select>' : '') +
         '<select data-filter="dash.objekt"><option value="">alle Objekte</option>' + H.objektOptionen(false).map(([v, l]) => '<option value="' + v + '"' + (f.objekt === v ? ' selected' : '') + '>' + esc(l) + '</option>').join('') + '</select>' +
         '<span class="sp"></span>' + (App.ihExcelKnopf && C.excelAenderungen(d).length ? App.ihExcelKnopf() : '') + '<button data-act="wvNeu">+ WV</button><button data-act="tagesliste">🖨 Tagesliste</button><button data-act="wvExcel">WV-Liste Excel</button></div>' +
-        App.wvTabelle(list, { leer: f.zeit === 'faellig' ? 'Nichts fällig – alles erledigt. 🎉' : 'Keine Einträge für diesen Filter.' }) + '</section>';
+        (f.zeit === 'flag' ? flagTabelle(flags.filter(x => (!f.bereich || x.bereich === f.bereich) && (!f.objekt || (H.objektVonFall(x.bereich, x.fall) || {}).id === f.objekt)))
+          : App.wvTabelle(list, { leer: f.zeit === 'faellig' ? 'Nichts fällig – alles erledigt. 🎉' : 'Keine Einträge für diesen Filter.' })) + '</section>';
     }
   };
+  function flagTabelle(l) {
+    if (!l.length) return H.leer('Jeder offene Vorgang hat einen nächsten Schritt und eine WV. 👍');
+    return '<p class="small muted">Jeder offene Vorgang braucht einen <b>nächsten Schritt</b> und eine <b>Wiedervorlage</b>. Hier fehlt eins davon.</p>' +
+      '<table class="tbl"><thead><tr><th>Bereich</th><th>Vorgang</th><th>es fehlt</th><th>letzte Aktivität</th><th class="r"></th></tr></thead><tbody>' +
+      l.map(x => { const v = App.data.verlauf.filter(e => e.bereich === x.bereich && e.refId === x.fall.id).sort((a, b) => b.datum.localeCompare(a.datum))[0];
+        return '<tr><td>' + H.chip(C.BEREICHE[x.bereich], 'b-' + x.bereich) + '</td><td><a href="#" data-act="openFall" data-b="' + x.bereich + '" data-id="' + x.fall.id + '">' + esc(H.fallLabel(x.bereich, x.fall)) + '</a>' +
+          (x.fall.naechsterSchritt ? '<br><small class="muted">→ ' + esc(x.fall.naechsterSchritt) + '</small>' : '') + '</td><td>' + (x.ohneSchritt ? H.chip('nächster Schritt', 'rot') + ' ' : '') + (x.ohneWV ? H.chip('WV', 'rot') : '') + '</td>' +
+          '<td class="small muted">' + (v ? fmtDatum(v.datum) + ' · ' + esc(v.text.slice(0, 50)) : '–') + '</td><td class="r"><button class="s primary" data-act="weiter" data-b="' + x.bereich + '" data-id="' + x.fall.id + '">➜ Schritt + WV</button></td></tr>'; }).join('') + '</tbody></table>';
+  }
   Object.assign(App.act, {
     dashZeit(ds) { App.f.dash.zeit = ds.z; App.f.dash.bereich = ''; App.render(); },
     dashBereich(ds) { App.f.dash.bereich = ds.b; App.f.dash.zeit = 'alle'; App.render(); },
@@ -2993,7 +3099,7 @@ Mit freundlichen Grüßen
     kautionAbrechnungMonate: 'Kaution: Abrechnung nach Übergabe (Monate)', auszahlung: 'Kaution: Auszahlung prüfen nach (Tagen)', bankverbindung: 'Kaution: Frist Bankverbindung (Tage)'
   };
 
-  const KACHELN = [['ueber', 'überfällig'], ['heute', 'heute fällig'], ['w7', 'in 7 Tagen'], ['opos', 'WV OPOS'], ['ih', 'WV Instandhaltung'], ['kaution', 'WV Kaution'], ['rueck', 'Rückstand gesamt'], ['verj', 'Kautionen mit naher Verjährung']];
+  const KACHELN = [['flag', '⚑ ohne nächsten Schritt / WV'], ['ueber', 'überfällig'], ['heute', 'heute fällig'], ['w7', 'in 7 Tagen'], ['opos', 'WV OPOS'], ['ih', 'WV Instandhaltung'], ['kaution', 'WV Kaution'], ['rueck', 'Rückstand gesamt'], ['verj', 'Kautionen mit naher Verjährung']];
   const DASH_ZEIT = [['faellig', 'fällig (bis heute)'], ['ueber', 'überfällig'], ['heute', 'heute'], ['7', 'nächste 7 Tage'], ['30', 'nächste 30 Tage'], ['alle', 'alle offenen']];
   function emailHTML() {
     const E = App.data.settings.email;
@@ -3338,7 +3444,8 @@ Mit freundlichen Grüßen
       const f = App.f.opos, d = App.data, q = f.q.toLowerCase();
       const list = d.opos.filter(x => {
         if (f.stufe === 'aktiv' && x.stufe === 'erledigt') return false;
-        if (f.stufe && f.stufe !== 'aktiv' && x.stufe !== f.stufe) return false;
+        if (f.stufe === 'flag') { if (!C.vorgangPruefen(App.data, 'opos', x).geflaggt) return false; }
+        else if (f.stufe && f.stufe !== 'aktiv' && x.stufe !== f.stufe) return false;
         return !q || H.fallLabel('opos', x).toLowerCase().includes(q) || (H.mieter(x.mieterId) || {}).mietnr === f.q;
       }).map(x => ({ x, offen: C.offenSumme(x.posten), wv: H.naechsteWV('opos', x.id), check: C.kuendigungsCheck(x.posten, (H.mieter(x.mieterId) || {}).gesamtmiete) }))
         .sort((a, b) => ((a.wv || {}).datum || '9999').localeCompare((b.wv || {}).datum || '9999') || b.offen - a.offen);
@@ -3346,7 +3453,7 @@ Mit freundlichen Grüßen
       const summe = C.sum(list, r => r.offen);
       return '<section class="card"><div class="toolbar"><h2>Offene Posten</h2>' +
         '<input type="search" id="oposQ" data-filter="opos.q" placeholder="Mieter, Objekt, Mietnr. …" value="' + esc(f.q) + '">' +
-        '<select data-filter="opos.stufe"><option value="aktiv"' + (f.stufe === 'aktiv' ? ' selected' : '') + '>aktive Fälle</option><option value=""' + (f.stufe === '' ? ' selected' : '') + '>alle</option>' +
+        '<select data-filter="opos.stufe"><option value="aktiv"' + (f.stufe === 'aktiv' ? ' selected' : '') + '>aktive Fälle</option><option value="flag"' + (f.stufe === 'flag' ? ' selected' : '') + '>⚑ ohne Schritt / WV</option><option value=""' + (f.stufe === '' ? ' selected' : '') + '>alle</option>' +
         C.STUFEN_REIHE.map(s => '<option value="' + s + '"' + (f.stufe === s ? ' selected' : '') + '>' + S[s] + '</option>').join('') + '</select>' +
         '<span class="sp"></span><button data-act="oposImport">⇪ OPOS-Liste einlesen</button><button data-act="oposExcel">Export Excel</button>' +
         '<button data-act="mahnlauf"' + (sel.length ? '' : ' disabled title="Fälle per Häkchen auswählen"') + '>Mahnlauf (' + sel.length + ')</button><button class="primary" data-act="oposNeu">+ Neuer Fall</button></div>' +
@@ -3355,7 +3462,7 @@ Mit freundlichen Grüßen
           list.map(({ x, offen, wv, check }) => {
             const m = H.mieter(x.mieterId) || {}; const o = H.objekt(m.objektId);
             return '<tr class="klick" data-act="openFall" data-b="opos" data-id="' + x.id + '"><td data-stop><input type="checkbox" data-change="oposSel" data-id="' + x.id + '"' + (f.sel[x.id] ? ' checked' : '') + '></td>' +
-              '<td><b>' + esc(C.mieterName(m)) + '</b>' + (m.mietnr ? ' <small class="muted">' + esc(m.mietnr) + '</small>' : '') + '</td><td>' + esc(o ? o.bezeichnung : '–') + (m.whg ? ' · ' + esc(m.whg) : '') + '</td>' +
+              '<td><b>' + esc(C.mieterName(m)) + '</b>' + App.flagIcon('opos', x) + (m.mietnr ? ' <small class="muted">' + esc(m.mietnr) + '</small>' : '') + '</td><td>' + esc(o ? o.bezeichnung : '–') + (m.whg ? ' · ' + esc(m.whg) : '') + '</td>' +
               '<td>' + stufeChip(x.stufe) + (m.mietende && m.mietende < C.today() ? ' ' + H.chip('ehemalig') : '') + (x.raten && x.raten.some(r => !r.bezahlt) ? ' ' + H.chip('Raten', 'blau') : '') + '</td><td class="r">' + fmtEUR(C.offenSumme(x.posten, 'miete')) + '</td><td class="r"><b>' + fmtEUR(offen) + '</b></td>' +
               '<td>' + fmtDatum(aeltesteFaelligkeit(x)) + '</td><td>' + H.wvChip(wv) + '</td><td>' + (check.moeglich && x.stufe !== 'erledigt' ? H.chip('⚠ Kündigung mögl.', 'rot') : '') + '</td>' +
               '<td class="r">' + (x.stufe !== 'erledigt' && offen > 0 ? '<button class="s" data-act="oposMahnenMail" data-id="' + x.id + '" title="' + (mailVon(m) ? 'Mahnung an ' + esc(mailVon(m)) : 'keine E-Mail hinterlegt') + '">✉ Mahnen' + (mailVon(m) ? '' : ' <span class="rot-t">!</span>') + '</button>' : '') + '</td></tr>';
@@ -3372,6 +3479,7 @@ Mit freundlichen Grüßen
       const briefBtn = (st, label) => '<button class="' + (st === ns ? 'primary' : '') + '" data-act="oposBrief" data-id="' + id + '" data-v="' + st + '">' + label + '</button>';
       return '<div class="detailkopf"><button data-act="back">← Liste</button><h2>' + esc(C.mieterName(m)) + '</h2>' + stufeChip(x.stufe) +
         '<span class="muted">' + esc(o.bezeichnung || '') + (m.whg ? ' · ' + esc(m.whg) : '') + '</span><span class="sp"></span><button class="s del" data-act="oposDel" data-id="' + id + '">Fall löschen</button></div>' +
+        App.flagBanner('opos', x) + App.schrittZeile('opos', x) +
         '<div class="cols3">' +
         '<section class="card"><h3>Mieter</h3><dl class="kv">' +
         '<dt>Mietnr.</dt><dd>' + esc(m.mietnr || '–') + '</dd><dt>Gesamtmiete</dt><dd>' + fmtEUR(m.gesamtmiete) + (m.mieteGeschaetzt ? ' <small class="muted" title="aus Grundmiete + Vorauszahlungen der OPOS-Liste; unter „Mieter bearbeiten“ korrigierbar">(geschätzt)</small>' : '') + '</dd><dt>Mietbeginn</dt><dd>' + fmtDatum(m.mietbeginn) + '</dd>' +
@@ -3410,6 +3518,7 @@ Mit freundlichen Grüßen
     App.data.opos.push(f);
     C.addVerlauf(App.data, 'opos', f.id, 'angelegt', 'Fall angelegt');
     C.createWV(App.data, 'opos', f.id, C.today(), 'Offene Posten prüfen – Zahlungserinnerung versenden?', { regel: 'opos:neu' });
+    f.naechsterSchritt = 'Offene Posten prüfen – mahnen?';
     return f;
   }
 
@@ -3723,7 +3832,7 @@ Mit freundlichen Grüßen
     const vorher = new Set(App.data.opos.map(f => f.id));
     const start = Math.max(1, +w.kopfZeile || 1);
     const st = C.importOPOS(App.data, rows.slice(start), mapping, C.today(), { mieterId });
-    App.data.opos.filter(f => !vorher.has(f.id)).forEach(f => C.createWV(App.data, 'opos', f.id, C.today(), 'Importierten Fall prüfen – Zahlungserinnerung versenden?', { regel: 'opos:neu' }));
+    App.data.opos.filter(f => !vorher.has(f.id)).forEach(f => (C.createWV(App.data, 'opos', f.id, C.today(), 'Importierten Fall prüfen – Zahlungserinnerung versenden?', { regel: 'opos:neu' }), f.naechsterSchritt = 'Importierten Fall prüfen – mahnen?'));
     const fall = mieterId && App.data.opos.find(f => f.mieterId === mieterId && f.stufe !== 'erledigt');
     if (fall) { App.tab = 'opos'; App.detail = fall.id; }
     App.commit();
@@ -3827,7 +3936,7 @@ Mit freundlichen Grüßen
         const zusatz = x.objektText && H.objekt(x.objektId) && C.normName(x.objektText) !== C.normName(objektName(x)) ? x.objektText : '';
         return '<tr class="klick" data-act="openFall" data-b="ih" data-id="' + x.id + '"><td>' + esc(objektName(x)) + (!x.objektId ? ' <small class="muted" title="keinem Objekt zugeordnet">?</small>' : '') +
           (zusatz ? '<br><small class="muted">' + esc(zusatz) + '</small>' : '') + (m && m.whg ? '<br><small class="muted">' + esc(C.mieterName(m)) + ' · ' + esc(m.whg) + '</small>' : '') + '</td>' +
-          '<td><b>' + esc(x.titel) + '</b>' + (x.fotos.length ? ' <small class="muted">📷' + x.fotos.length + '</small>' : '') + (x.naechsterSchritt ? '<br><small>→ ' + esc(x.naechsterSchritt) + '</small>' : '') +
+          '<td><b>' + esc(x.titel) + '</b>' + App.flagIcon('ih', x) + (x.fotos.length ? ' <small class="muted">📷' + x.fotos.length + '</small>' : '') + (x.naechsterSchritt ? '<br><small>→ ' + esc(x.naechsterSchritt) + '</small>' : '') +
           (hw ? '<br><small class="muted">' + esc(hw.firma) + '</small>' : '') + '</td><td>' + esc(x.sb || '') + '</td>' +
           '<td>' + (x.prio ? H.chip(x.prio, PRIO_CLS[x.prio] || '') : x.dringlichkeit !== 'normal' ? H.chip(DR[x.dringlichkeit], 'dr-' + x.dringlichkeit) : '') + '</td>' +
           '<td>' + H.chip(ST[x.status], 'is-' + x.status) + '</td><td class="nw small">' + fmtDatum(x.termin) + (x.terminText && !x.termin ? esc(x.terminText.slice(0, 25)) : '') + '</td>' +
@@ -3845,7 +3954,7 @@ Mit freundlichen Grüßen
     const f = App.f.ih, q = f.q.toLowerCase();
     const prioRang = x => ({ 'A+': 0, AAA: 0, AA: 1, A: 2, B: 3, C: 4 }[x.prio] ?? ({ notfall: 0, hoch: 1, normal: 5 }[x.dringlichkeit]));
     return App.data.ih.filter(x => (!f.objekt || (f.objekt === '_ohne' ? !x.objektId : x.objektId === f.objekt)) && (!f.sb || (f.sb === '_mein' ? App.istMeine({ bereich: 'ih', refId: x.id }) : (x.sb || '') === f.sb)) &&
-      (f.status === '' || (f.status === 'aktiv' ? aktiv(x) : x.status === f.status)) &&
+      (f.status === '' || (f.status === 'aktiv' ? aktiv(x) : f.status === 'flag' ? C.vorgangPruefen(App.data, 'ih', x).geflaggt : x.status === f.status)) &&
       (!q || [x.titel, x.beschreibung, x.naechsterSchritt, x.material, x.besonderheiten, x.objektText, H.fallLabel('ih', x)].join(' ').toLowerCase().includes(q)))
       .sort((a, b) => ((H.naechsteWV('ih', a.id) || {}).datum || '9999').localeCompare((H.naechsteWV('ih', b.id) || {}).datum || '9999') || prioRang(a) - prioRang(b));
   }
@@ -3856,7 +3965,7 @@ Mit freundlichen Grüßen
       return '<section class="card"><div class="toolbar"><h2>Instandhaltung</h2><input type="search" id="ihQ" data-filter="ih.q" placeholder="Suchen …" value="' + esc(f.q) + '">' +
         '<select data-filter="ih.objekt"><option value="">alle Objekte</option><option value="_ohne"' + (f.objekt === '_ohne' ? ' selected' : '') + '>– ohne Objekt –</option>' + H.objektOptionen(false).filter(([v]) => App.data.ih.some(x => x.objektId === v)).map(([v, l]) => '<option value="' + v + '"' + (f.objekt === v ? ' selected' : '') + '>' + esc(l) + '</option>').join('') + '</select>' +
         '<select data-filter="ih.sb"><option value="">alle SB</option>' + (App.ui().meinSB ? '<option value="_mein"' + (f.sb === '_mein' ? ' selected' : '') + '>nur meine (' + esc(App.ui().meinSB) + ')</option>' : '') + Array.from(new Set(App.data.ih.map(x => x.sb).filter(Boolean))).sort().map(v => '<option' + (f.sb === v ? ' selected' : '') + '>' + esc(v) + '</option>').join('') + '</select>' +
-        '<select data-filter="ih.status"><option value="aktiv"' + (f.status === 'aktiv' ? ' selected' : '') + '>aktive</option><option value=""' + (f.status === '' ? ' selected' : '') + '>alle</option>' +
+        '<select data-filter="ih.status"><option value="aktiv"' + (f.status === 'aktiv' ? ' selected' : '') + '>aktive</option><option value="flag"' + (f.status === 'flag' ? ' selected' : '') + '>⚑ ohne Schritt / WV</option><option value=""' + (f.status === '' ? ' selected' : '') + '>alle</option>' +
         REIHE.map(s => '<option value="' + s + '"' + (f.status === s ? ' selected' : '') + '>' + ST[s] + '</option>').join('') + '</select>' +
         '<span class="muted">' + list.length + ' Aufgaben</span><span class="sp"></span>' + (App.data.meta.ihListeStand ? '<small class="muted">Liste eingelesen ' + fmtDatum(App.data.meta.ihListeStand) + '</small>' : '') +
         '<button data-act="ihListeImport">⇪ Instandhaltungsliste einlesen</button>' + excelKnopf() + '<button data-act="ihExcel">Liste Excel</button><button data-act="ihPng">PNG</button><button class="primary" data-act="ihNeu">+ Aufgabe / Schaden</button></div>' +
@@ -3873,12 +3982,13 @@ Mit freundlichen Grüßen
         '<span class="muted">' + esc(o.bezeichnung || x.objektText || '') + (m ? ' · ' + esc(C.mieterName(m)) + (m.whg ? ' (' + esc(m.whg) + ')' : '') : '') + '</span><span class="sp"></span>' +
         '<button class="s" data-act="ihEdit" data-id="' + id + '">Bearbeiten</button><button class="s del" data-act="ihDel" data-id="' + id + '">Löschen</button></div>' +
         '<div class="pipeline">' + REIHE.map((s, i) => '<span class="' + (i < idx ? 'done' : i === idx ? 'on' : '') + '">' + ST[s] + '</span>').join('') + '</div>' +
+        App.flagBanner('ih', x) + (!(x.naechsterSchritt || x.material || x.besonderheiten || x.sb) ? App.schrittZeile('ih', x) : '') +
         (x.naechsterSchritt || x.material || x.besonderheiten || x.sb ? '<section class="card naechster"><dl class="kv">' +
           (x.naechsterSchritt ? '<dt>nächster Schritt</dt><dd><b>' + esc(x.naechsterSchritt) + '</b></dd>' : '') + (x.sb ? '<dt>SB</dt><dd>' + esc(x.sb) + '</dd>' : '') +
           (x.material ? '<dt>Material / Info</dt><dd class="pre">' + esc(x.material) + '</dd>' : '') + (x.besonderheiten ? '<dt>Besonderheiten</dt><dd class="pre">' + esc(x.besonderheiten) + '</dd>' : '') +
           (x.mieterInfo ? '<dt>Mieter / Info</dt><dd>' + esc(x.mieterInfo) + '</dd>' : '') + (x.terminText ? '<dt>Termin (Liste)</dt><dd>' + esc(x.terminText) + '</dd>' : '') +
           (x.wvText ? '<dt>WV-Notiz (Liste)</dt><dd>' + esc(x.wvText) + '</dd>' : '') + (x.quelle === 'ih-liste' ? '<dt>Quelle</dt><dd class="muted">Instandhaltungsliste, Zeile ' + esc(x.listenZeile || '') + ' – Änderungen dort werden beim nächsten Einlesen übernommen</dd>' : '') +
-          '</dl><button class="s" data-act="ihSchritt" data-id="' + id + '">nächsten Schritt ändern</button></section>' : '') +
+          '</dl><button class="s" data-act="weiter" data-b="ih" data-id="' + id + '">nächsten Schritt + WV ändern</button></section>' : '') +
         '<div class="cols3"><section class="card"><h3>Aufgabe</h3><p class="pre">' + esc(x.beschreibung || '–') + '</p><dl class="kv">' +
         '<dt>gemeldet</dt><dd>' + fmtDatum(x.gemeldetAm) + '</dd><dt>Gewerk</dt><dd>' + esc(x.gewerk || '–') + '</dd><dt>Verursacher</dt><dd>' + VERURSACHER[x.verursacher || 'unklar'] + '</dd>' +
         '<dt>Handwerker</dt><dd>' + esc(hw ? hw.firma : '–') + '</dd><dt>Auftrag am</dt><dd>' + fmtDatum(x.auftragAm) + '</dd><dt>Termin</dt><dd>' + fmtDatum(x.termin) + (x.terminZeit ? ' ' + esc(x.terminZeit) : '') + '</dd>' +
@@ -4217,17 +4327,17 @@ Mit freundlichen Grüßen
   App.views.kaution = {
     render() {
       const f = App.f.kaution, q = f.q.toLowerCase();
-      const list = App.data.kaution.filter(k => (f.status === '' || (f.status === 'aktiv' ? k.status !== 'ausgezahlt' : k.status === f.status)) &&
+      const list = App.data.kaution.filter(k => (f.status === '' || (f.status === 'aktiv' ? k.status !== 'ausgezahlt' : f.status === 'flag' ? C.vorgangPruefen(App.data, 'kaution', k).geflaggt : k.status === f.status)) &&
         (!q || H.fallLabel('kaution', k).toLowerCase().includes(q)))
         .sort((a, b) => ((C.verjaehrung(a) || { restTage: 9999 }).restTage - (C.verjaehrung(b) || { restTage: 9999 }).restTage));
       return '<section class="card"><div class="toolbar"><h2>Kautionen</h2><input type="search" id="kautQ" data-filter="kaution.q" placeholder="Suchen …" value="' + esc(f.q) + '">' +
-        '<select data-filter="kaution.status"><option value="aktiv"' + (f.status === 'aktiv' ? ' selected' : '') + '>aktive</option><option value=""' + (f.status === '' ? ' selected' : '') + '>alle</option>' +
+        '<select data-filter="kaution.status"><option value="aktiv"' + (f.status === 'aktiv' ? ' selected' : '') + '>aktive</option><option value="flag"' + (f.status === 'flag' ? ' selected' : '') + '>⚑ ohne Schritt / WV</option><option value=""' + (f.status === '' ? ' selected' : '') + '>alle</option>' +
         Object.entries(KS).map(([v, l]) => '<option value="' + v + '"' + (f.status === v ? ' selected' : '') + '>' + l + '</option>').join('') + '</select>' +
         '<span class="sp"></span><button data-act="kautionAuszahlungsliste">Auszahlungsliste Excel</button><button class="primary" data-act="kautionNeu">+ Kautionsfall</button></div>' +
         (list.length ? '<table class="tbl"><thead><tr><th></th><th>Mieter</th><th>Objekt / Whg</th><th class="r">Kaution</th><th>Art</th><th>Auszug</th><th>Übergabe</th><th>Verjährung</th><th>Status</th><th class="r">Auszahlung</th><th>nächste WV</th></tr></thead><tbody>' +
           list.map(k => {
             const m = H.mieter(k.mieterId) || {}; const o = H.objekt(m.objektId) || {}; const v = C.verjaehrung(k); const r = C.kautionsabrechnung(k);
-            return '<tr class="klick" data-act="openFall" data-b="kaution" data-id="' + k.id + '"><td>' + ampelDot(k) + '</td><td><b>' + esc(C.mieterName(m)) + '</b></td><td>' + esc(o.bezeichnung || '–') + (m.whg ? ' · ' + esc(m.whg) : '') + '</td>' +
+            return '<tr class="klick" data-act="openFall" data-b="kaution" data-id="' + k.id + '"><td>' + ampelDot(k) + '</td><td><b>' + esc(C.mieterName(m)) + '</b>' + App.flagIcon('kaution', k) + '</td><td>' + esc(o.bezeichnung || '–') + (m.whg ? ' · ' + esc(m.whg) : '') + '</td>' +
               '<td class="r">' + fmtEUR(k.betrag) + '</td><td>' + ART[k.art] + '</td><td>' + fmtDatum(k.auszugAm) + '</td><td>' + fmtDatum(k.uebergabeAm) + '</td>' +
               '<td>' + (v ? fmtDatum(v.ende) + ' <small class="' + (v.restTage < warn() ? 'rot-t' : 'muted') + '">(' + (v.restTage >= 0 ? 'noch ' + v.restTage + ' T' : 'abgelaufen') + ')</small>' : '–') + '</td>' +
               '<td>' + H.chip(KS[k.status], 'ks-' + k.status) + '</td><td class="r">' + (k.auszugAm ? fmtEUR(r.auszahlung) : '') + '</td><td>' + H.wvChip(H.naechsteWV('kaution', k.id)) + '</td></tr>';
@@ -4243,6 +4353,7 @@ Mit freundlichen Grüßen
       return '<div class="detailkopf"><button data-act="back">← Liste</button><h2>Kaution ' + esc(C.mieterName(m)) + '</h2>' + H.chip(KS[k.status], 'ks-' + k.status) +
         '<span class="muted">' + esc(o.bezeichnung || '') + (m.whg ? ' · ' + esc(m.whg) : '') + '</span><span class="sp"></span>' +
         '<button class="s" data-act="kautionEdit" data-id="' + id + '">Bearbeiten</button><button class="s del" data-act="kautionDel" data-id="' + id + '">Löschen</button></div>' +
+        App.flagBanner('kaution', k) + App.schrittZeile('kaution', k) +
         '<div class="cols3"><section class="card ampel-' + a + '"><h3>Fristen</h3>' +
         (v ? '<div class="big ' + (v.restTage < warn() ? 'rot-t' : '') + '">' + (v.restTage >= 0 ? 'noch ' + v.restTage + ' Tage' : 'seit ' + (-v.restTage) + ' Tagen abgelaufen') + '</div>' +
           '<div>bis zur <b>Verjährung § 548 BGB</b> am <b>' + fmtDatum(v.ende) + '</b></div><p class="small muted">Ersatzansprüche wegen Veränderung/Verschlechterung verjähren 6 Monate nach Rückgabe der Mietsache. ' +
@@ -4285,6 +4396,7 @@ Mit freundlichen Grüßen
       const k = Object.assign({ id: C.uid(), status: 'offen', einbehalte: [], nkEinbehalt: 0 }, v);
       App.data.kaution.push(k); C.addVerlauf(App.data, 'kaution', k.id, 'angelegt', 'Kautionsfall angelegt (' + fmtEUR(k.betrag) + ')');
       App.tab = 'kaution'; App.detail = k.id; App.commit();
+      if (!(App.data.mieter.find(x => x.id === k.mieterId) || {}).mietende) await App.weiter('kaution', k.id, { titel: 'Neuer Kautionsfall – nächster Schritt + WV' });
       const m = H.mieter(k.mieterId);
       if (m && m.mietende && await App.confirm('Mietende ' + fmtDatum(m.mietende) + ' ist hinterlegt. Auszug/Übergabe jetzt erfassen?')) App.act.kautionAuszug({ id: k.id });
     },

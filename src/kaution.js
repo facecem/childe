@@ -15,17 +15,17 @@
   App.views.kaution = {
     render() {
       const f = App.f.kaution, q = f.q.toLowerCase();
-      const list = App.data.kaution.filter(k => (f.status === '' || (f.status === 'aktiv' ? k.status !== 'ausgezahlt' : k.status === f.status)) &&
+      const list = App.data.kaution.filter(k => (f.status === '' || (f.status === 'aktiv' ? k.status !== 'ausgezahlt' : f.status === 'flag' ? C.vorgangPruefen(App.data, 'kaution', k).geflaggt : k.status === f.status)) &&
         (!q || H.fallLabel('kaution', k).toLowerCase().includes(q)))
         .sort((a, b) => ((C.verjaehrung(a) || { restTage: 9999 }).restTage - (C.verjaehrung(b) || { restTage: 9999 }).restTage));
       return '<section class="card"><div class="toolbar"><h2>Kautionen</h2><input type="search" id="kautQ" data-filter="kaution.q" placeholder="Suchen …" value="' + esc(f.q) + '">' +
-        '<select data-filter="kaution.status"><option value="aktiv"' + (f.status === 'aktiv' ? ' selected' : '') + '>aktive</option><option value=""' + (f.status === '' ? ' selected' : '') + '>alle</option>' +
+        '<select data-filter="kaution.status"><option value="aktiv"' + (f.status === 'aktiv' ? ' selected' : '') + '>aktive</option><option value="flag"' + (f.status === 'flag' ? ' selected' : '') + '>⚑ ohne Schritt / WV</option><option value=""' + (f.status === '' ? ' selected' : '') + '>alle</option>' +
         Object.entries(KS).map(([v, l]) => '<option value="' + v + '"' + (f.status === v ? ' selected' : '') + '>' + l + '</option>').join('') + '</select>' +
         '<span class="sp"></span><button data-act="kautionAuszahlungsliste">Auszahlungsliste Excel</button><button class="primary" data-act="kautionNeu">+ Kautionsfall</button></div>' +
         (list.length ? '<table class="tbl"><thead><tr><th></th><th>Mieter</th><th>Objekt / Whg</th><th class="r">Kaution</th><th>Art</th><th>Auszug</th><th>Übergabe</th><th>Verjährung</th><th>Status</th><th class="r">Auszahlung</th><th>nächste WV</th></tr></thead><tbody>' +
           list.map(k => {
             const m = H.mieter(k.mieterId) || {}; const o = H.objekt(m.objektId) || {}; const v = C.verjaehrung(k); const r = C.kautionsabrechnung(k);
-            return '<tr class="klick" data-act="openFall" data-b="kaution" data-id="' + k.id + '"><td>' + ampelDot(k) + '</td><td><b>' + esc(C.mieterName(m)) + '</b></td><td>' + esc(o.bezeichnung || '–') + (m.whg ? ' · ' + esc(m.whg) : '') + '</td>' +
+            return '<tr class="klick" data-act="openFall" data-b="kaution" data-id="' + k.id + '"><td>' + ampelDot(k) + '</td><td><b>' + esc(C.mieterName(m)) + '</b>' + App.flagIcon('kaution', k) + '</td><td>' + esc(o.bezeichnung || '–') + (m.whg ? ' · ' + esc(m.whg) : '') + '</td>' +
               '<td class="r">' + fmtEUR(k.betrag) + '</td><td>' + ART[k.art] + '</td><td>' + fmtDatum(k.auszugAm) + '</td><td>' + fmtDatum(k.uebergabeAm) + '</td>' +
               '<td>' + (v ? fmtDatum(v.ende) + ' <small class="' + (v.restTage < warn() ? 'rot-t' : 'muted') + '">(' + (v.restTage >= 0 ? 'noch ' + v.restTage + ' T' : 'abgelaufen') + ')</small>' : '–') + '</td>' +
               '<td>' + H.chip(KS[k.status], 'ks-' + k.status) + '</td><td class="r">' + (k.auszugAm ? fmtEUR(r.auszahlung) : '') + '</td><td>' + H.wvChip(H.naechsteWV('kaution', k.id)) + '</td></tr>';
@@ -41,6 +41,7 @@
       return '<div class="detailkopf"><button data-act="back">← Liste</button><h2>Kaution ' + esc(C.mieterName(m)) + '</h2>' + H.chip(KS[k.status], 'ks-' + k.status) +
         '<span class="muted">' + esc(o.bezeichnung || '') + (m.whg ? ' · ' + esc(m.whg) : '') + '</span><span class="sp"></span>' +
         '<button class="s" data-act="kautionEdit" data-id="' + id + '">Bearbeiten</button><button class="s del" data-act="kautionDel" data-id="' + id + '">Löschen</button></div>' +
+        App.flagBanner('kaution', k) + App.schrittZeile('kaution', k) +
         '<div class="cols3"><section class="card ampel-' + a + '"><h3>Fristen</h3>' +
         (v ? '<div class="big ' + (v.restTage < warn() ? 'rot-t' : '') + '">' + (v.restTage >= 0 ? 'noch ' + v.restTage + ' Tage' : 'seit ' + (-v.restTage) + ' Tagen abgelaufen') + '</div>' +
           '<div>bis zur <b>Verjährung § 548 BGB</b> am <b>' + fmtDatum(v.ende) + '</b></div><p class="small muted">Ersatzansprüche wegen Veränderung/Verschlechterung verjähren 6 Monate nach Rückgabe der Mietsache. ' +
@@ -83,6 +84,7 @@
       const k = Object.assign({ id: C.uid(), status: 'offen', einbehalte: [], nkEinbehalt: 0 }, v);
       App.data.kaution.push(k); C.addVerlauf(App.data, 'kaution', k.id, 'angelegt', 'Kautionsfall angelegt (' + fmtEUR(k.betrag) + ')');
       App.tab = 'kaution'; App.detail = k.id; App.commit();
+      if (!(App.data.mieter.find(x => x.id === k.mieterId) || {}).mietende) await App.weiter('kaution', k.id, { titel: 'Neuer Kautionsfall – nächster Schritt + WV' });
       const m = H.mieter(k.mieterId);
       if (m && m.mietende && await App.confirm('Mietende ' + fmtDatum(m.mietende) + ' ist hinterlegt. Auszug/Übergabe jetzt erfassen?')) App.act.kautionAuszug({ id: k.id });
     },

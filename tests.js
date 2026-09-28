@@ -298,6 +298,22 @@ const nV = C.taktUmstellen(altT, '2026-09-28');
 eq([altT.settings.fristen.erinnerung, altT.settings.fristen.anwalt, altT.settings.fristen.angebot, altT.settings.puffer, altT.settings.ui.neuWvTage], [7, 7, 21, 1, 2], 'Standardwerte umgestellt, eigene Werte (21) bleiben');
 eq([nV, altT.wv.map(w => w.datum)], [2, ['2026-10-09', '2026-10-05', '2026-10-01']], 'offene Auto-WV vorgezogen (Frist + 1, Anwalt +7), manuelle bleibt');
 
+section('Pflicht: nächster Schritt + WV');
+d = testData();
+eq(C.geflaggt(d).map(x => [x.bereich, x.ohneSchritt, x.ohneWV]), [['opos', true, true], ['ih', true, true], ['kaution', true, true]], 'neue Vorgänge ohne Schritt/WV sind geflaggt');
+C.applyAction(d, 'opos', 'o1', 'erinnerung', { heute: '2026-09-28' });
+eq([d.opos[0].naechsterSchritt.slice(0, 26), C.vorgangPruefen(d, 'opos', d.opos[0]).geflaggt], ['Zahlungseingang prüfen (Za', false], 'Aktion setzt nächsten Schritt aus der WV');
+const wS = C.schrittSetzen(d, 'kaution', 'k1', 'Bankverbindung anfordern', '2026-10-03', { heute: '2026-09-28' });
+eq([wS.datum, d.kaution[0].naechsterSchritt, C.vorgangPruefen(d, 'kaution', d.kaution[0]).geflaggt], ['2026-10-05', 'Bankverbindung anfordern', false], 'Schritt + WV setzen (WV auf Werktag)');
+C.schrittSetzen(d, 'kaution', 'k1', 'Abrechnung', '2026-10-10', { erledigeWV: wS.id, heute: '2026-10-01' });
+eq([wS.status, C.offeneWV(d, 'kaution', 'k1').length], ['erledigt', 1], 'dabei alte WV erledigt');
+d.ih[0].naechsterSchritt = 'Handwerker anrufen';
+eq(C.vorgangPruefen(d, 'ih', d.ih[0]), { ohneWV: true, ohneSchritt: false, geflaggt: true }, 'Schritt ohne WV bleibt geflaggt');
+C.applyAction(d, 'opos', 'o1', 'erledigt', { heute: '2026-10-02' });
+eq([d.opos[0].naechsterSchritt, C.vorgangPruefen(d, 'opos', d.opos[0]).geflaggt], ['', false], 'erledigter Vorgang ist nie geflaggt');
+const dm = C.normalize({ settings: {}, opos: [{ id: 'z', mieterId: 'm', stufe: 'neu', posten: [] }], wv: [{ id: 'w', bereich: 'opos', refId: 'z', datum: '2026-10-01', aufgabe: 'Mieter anrufen', status: 'offen', erstelltDurch: 'manuell' }], meta: { takt: 2 } });
+eq([dm.opos[0].naechsterSchritt, dm.settings.ui.kacheln[0]], ['Mieter anrufen', 'flag'], 'Umstellung: Schritt aus offener WV, ⚑-Kachel');
+
 section('Vorlagen');
 const html = C.vorlageZuHTML('Hallo {{m.name}},\n\n{{postenTabelle}}\n\nSumme **{{s}}** <x>\nZeile {{fehlt}}', { m: { name: 'A & B' }, postenTabelle: '<table>\n<tr><td>1</td></tr></table>', s: '1,00 €' });
 eq(html, '<p>Hallo A &amp; B,</p>\n<table><tr><td>1</td></tr></table>\n<p>Summe <b>1,00 €</b> &lt;x&gt;<br>Zeile <mark>{{fehlt}}</mark></p>', 'vorlageZuHTML');

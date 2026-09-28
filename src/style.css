@@ -151,3 +151,8 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
 .multi b{font-weight:600}
 .multi.liste{grid-template-columns:1fr;gap:0;padding:0} .multi.liste label{display:flex;gap:8px;padding:4px 8px;border-bottom:1px solid var(--line2)} .multi.liste label:hover{background:var(--pri-soft)} .multi.liste b{margin-left:auto;white-space:nowrap}
 .card.naechster{border-left:4px solid var(--pri)} .card.naechster dl.kv{margin:0 0 8px}
+
+/* Pflicht: nächster Schritt + WV */
+.banner.flag{background:#fff1f0;border:1px solid #f3b9b3} .flagicon{color:var(--rot);font-weight:700}
+.kachel.flag{border-color:#f3b9b3;background:#fff1f0} .kachel.flag b{color:var(--rot)}
+.schrittzeile{margin:0 0 12px;padding:8px 12px;background:var(--card);border:1px solid var(--line);border-left:4px solid var(--pri);border-radius:var(--r)}

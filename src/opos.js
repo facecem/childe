@@ -37,7 +37,8 @@
       const f = App.f.opos, d = App.data, q = f.q.toLowerCase();
       const list = d.opos.filter(x => {
         if (f.stufe === 'aktiv' && x.stufe === 'erledigt') return false;
-        if (f.stufe && f.stufe !== 'aktiv' && x.stufe !== f.stufe) return false;
+        if (f.stufe === 'flag') { if (!C.vorgangPruefen(App.data, 'opos', x).geflaggt) return false; }
+        else if (f.stufe && f.stufe !== 'aktiv' && x.stufe !== f.stufe) return false;
         return !q || H.fallLabel('opos', x).toLowerCase().includes(q) || (H.mieter(x.mieterId) || {}).mietnr === f.q;
       }).map(x => ({ x, offen: C.offenSumme(x.posten), wv: H.naechsteWV('opos', x.id), check: C.kuendigungsCheck(x.posten, (H.mieter(x.mieterId) || {}).gesamtmiete) }))
         .sort((a, b) => ((a.wv || {}).datum || '9999').localeCompare((b.wv || {}).datum || '9999') || b.offen - a.offen);
@@ -45,7 +46,7 @@
       const summe = C.sum(list, r => r.offen);
       return '<section class="card"><div class="toolbar"><h2>Offene Posten</h2>' +
         '<input type="search" id="oposQ" data-filter="opos.q" placeholder="Mieter, Objekt, Mietnr. …" value="' + esc(f.q) + '">' +
-        '<select data-filter="opos.stufe"><option value="aktiv"' + (f.stufe === 'aktiv' ? ' selected' : '') + '>aktive Fälle</option><option value=""' + (f.stufe === '' ? ' selected' : '') + '>alle</option>' +
+        '<select data-filter="opos.stufe"><option value="aktiv"' + (f.stufe === 'aktiv' ? ' selected' : '') + '>aktive Fälle</option><option value="flag"' + (f.stufe === 'flag' ? ' selected' : '') + '>⚑ ohne Schritt / WV</option><option value=""' + (f.stufe === '' ? ' selected' : '') + '>alle</option>' +
         C.STUFEN_REIHE.map(s => '<option value="' + s + '"' + (f.stufe === s ? ' selected' : '') + '>' + S[s] + '</option>').join('') + '</select>' +
         '<span class="sp"></span><button data-act="oposImport">⇪ OPOS-Liste einlesen</button><button data-act="oposExcel">Export Excel</button>' +
         '<button data-act="mahnlauf"' + (sel.length ? '' : ' disabled title="Fälle per Häkchen auswählen"') + '>Mahnlauf (' + sel.length + ')</button><button class="primary" data-act="oposNeu">+ Neuer Fall</button></div>' +
@@ -54,7 +55,7 @@
           list.map(({ x, offen, wv, check }) => {
             const m = H.mieter(x.mieterId) || {}; const o = H.objekt(m.objektId);
             return '<tr class="klick" data-act="openFall" data-b="opos" data-id="' + x.id + '"><td data-stop><input type="checkbox" data-change="oposSel" data-id="' + x.id + '"' + (f.sel[x.id] ? ' checked' : '') + '></td>' +
-              '<td><b>' + esc(C.mieterName(m)) + '</b>' + (m.mietnr ? ' <small class="muted">' + esc(m.mietnr) + '</small>' : '') + '</td><td>' + esc(o ? o.bezeichnung : '–') + (m.whg ? ' · ' + esc(m.whg) : '') + '</td>' +
+              '<td><b>' + esc(C.mieterName(m)) + '</b>' + App.flagIcon('opos', x) + (m.mietnr ? ' <small class="muted">' + esc(m.mietnr) + '</small>' : '') + '</td><td>' + esc(o ? o.bezeichnung : '–') + (m.whg ? ' · ' + esc(m.whg) : '') + '</td>' +
               '<td>' + stufeChip(x.stufe) + (m.mietende && m.mietende < C.today() ? ' ' + H.chip('ehemalig') : '') + (x.raten && x.raten.some(r => !r.bezahlt) ? ' ' + H.chip('Raten', 'blau') : '') + '</td><td class="r">' + fmtEUR(C.offenSumme(x.posten, 'miete')) + '</td><td class="r"><b>' + fmtEUR(offen) + '</b></td>' +
               '<td>' + fmtDatum(aeltesteFaelligkeit(x)) + '</td><td>' + H.wvChip(wv) + '</td><td>' + (check.moeglich && x.stufe !== 'erledigt' ? H.chip('⚠ Kündigung mögl.', 'rot') : '') + '</td>' +
               '<td class="r">' + (x.stufe !== 'erledigt' && offen > 0 ? '<button class="s" data-act="oposMahnenMail" data-id="' + x.id + '" title="' + (mailVon(m) ? 'Mahnung an ' + esc(mailVon(m)) : 'keine E-Mail hinterlegt') + '">✉ Mahnen' + (mailVon(m) ? '' : ' <span class="rot-t">!</span>') + '</button>' : '') + '</td></tr>';
@@ -71,6 +72,7 @@
       const briefBtn = (st, label) => '<button class="' + (st === ns ? 'primary' : '') + '" data-act="oposBrief" data-id="' + id + '" data-v="' + st + '">' + label + '</button>';
       return '<div class="detailkopf"><button data-act="back">← Liste</button><h2>' + esc(C.mieterName(m)) + '</h2>' + stufeChip(x.stufe) +
         '<span class="muted">' + esc(o.bezeichnung || '') + (m.whg ? ' · ' + esc(m.whg) : '') + '</span><span class="sp"></span><button class="s del" data-act="oposDel" data-id="' + id + '">Fall löschen</button></div>' +
+        App.flagBanner('opos', x) + App.schrittZeile('opos', x) +
         '<div class="cols3">' +
         '<section class="card"><h3>Mieter</h3><dl class="kv">' +
         '<dt>Mietnr.</dt><dd>' + esc(m.mietnr || '–') + '</dd><dt>Gesamtmiete</dt><dd>' + fmtEUR(m.gesamtmiete) + (m.mieteGeschaetzt ? ' <small class="muted" title="aus Grundmiete + Vorauszahlungen der OPOS-Liste; unter „Mieter bearbeiten“ korrigierbar">(geschätzt)</small>' : '') + '</dd><dt>Mietbeginn</dt><dd>' + fmtDatum(m.mietbeginn) + '</dd>' +
@@ -109,6 +111,7 @@
     App.data.opos.push(f);
     C.addVerlauf(App.data, 'opos', f.id, 'angelegt', 'Fall angelegt');
     C.createWV(App.data, 'opos', f.id, C.today(), 'Offene Posten prüfen – Zahlungserinnerung versenden?', { regel: 'opos:neu' });
+    f.naechsterSchritt = 'Offene Posten prüfen – mahnen?';
     return f;
   }
 
@@ -422,7 +425,7 @@
     const vorher = new Set(App.data.opos.map(f => f.id));
     const start = Math.max(1, +w.kopfZeile || 1);
     const st = C.importOPOS(App.data, rows.slice(start), mapping, C.today(), { mieterId });
-    App.data.opos.filter(f => !vorher.has(f.id)).forEach(f => C.createWV(App.data, 'opos', f.id, C.today(), 'Importierten Fall prüfen – Zahlungserinnerung versenden?', { regel: 'opos:neu' }));
+    App.data.opos.filter(f => !vorher.has(f.id)).forEach(f => (C.createWV(App.data, 'opos', f.id, C.today(), 'Importierten Fall prüfen – Zahlungserinnerung versenden?', { regel: 'opos:neu' }), f.naechsterSchritt = 'Importierten Fall prüfen – mahnen?'));
     const fall = mieterId && App.data.opos.find(f => f.mieterId === mieterId && f.stufe !== 'erledigt');
     if (fall) { App.tab = 'opos'; App.detail = fall.id; }
     App.commit();
