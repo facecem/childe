@@ -139,11 +139,31 @@
       fristen: {
         erinnerung: 10, mahnung1: 10, mahnungLetzte: 7, abmahnung: 14, kuendigung: 14, anwalt: 14,
         angebot: 5, ausfuehrung: 10, rechnung: 14, ihMieter: 14, weiterbelastung: 14,
-        kautionAbrechnungMonate: 3, auszahlung: 14, bankverbindung: 14
+        kautionAbrechnungMonate: 3, auszahlung: 14, bankverbindung: 14, emailMahnung: 7
       },
       puffer: 3, mahngebuehr: 0, feiertageNRW: true, ratenVerzugTage: 14,
+      email: defaultEmail(),
       ui: defaultUI()
     };
+  }
+  /** E-Mail-Mahnung: Versandweg und Signatur */
+  function defaultEmail() {
+    return {
+      methode: 'mailto', abmahnungStandard: true, cc: '',
+      signatur: 'Mit freundlichen Grüßen\n\ni.A. H. Sahin\n\nHausverwaltung Dr. Marcel M. Sauren\nBrüsseler Ring 51\n52074 Aachen\n\nAchtung!\nTermine vor Ort nur nach vorheriger Vereinbarung.\n\n' +
+        'Telefonzeiten:\nMo.   10:00-11:30 / 15:00-18:00\nDi.   10:00-11:30 / 15:00-18:00\nMi.   15:00-18:00\nDo.   10:00-11:30 / 15:00-18:00\nFr.   10:00-11:30 / 15:00-18:00\n\n' +
+        'Tel:   0241 7755-023\nMail-to: hausverwaltung2@haus-ac.de\n\n' +
+        'Diese E-Mail könnte vertrauliche und/oder rechtlich geschützte Informationen enthalten. Wenn Sie nicht der richtige Adressat sind oder diese E-Mail irrtümlich erhalten haben, informieren Sie bitte sofort den Absender und vernichten Sie diese Mail. Das unerlaubte Kopieren sowie die unbefugte Weitergabe dieser Mail sind nicht gestattet.'
+    };
+  }
+  /** Offene Mietmonate als Text: „August 2026“, „Juli und August 2026“, „Juni, Juli und August 2026“ */
+  function monateText(posten) {
+    const ym = Array.from(new Set((posten || []).filter(p => p.typ === 'miete' && round2(p.offen) > 0 && p.faellig).map(p => p.faellig.slice(0, 7)))).sort();
+    if (!ym.length) return '';
+    const jahre = new Set(ym.map(x => x.slice(0, 4)));
+    const labels = ym.map(x => jahre.size === 1 ? monatLabel(x).split(' ')[0] : monatLabel(x));
+    const txt = labels.length === 1 ? labels[0] : labels.slice(0, -1).join(', ') + ' und ' + labels[labels.length - 1];
+    return jahre.size === 1 ? txt + ' ' + ym[0].slice(0, 4) : txt;
   }
   /** Anpassbare Oberfläche (Einstellungen → Anpassen) */
   function defaultUI() {
@@ -182,6 +202,7 @@
     out.settings = Object.assign(defaultSettings(), d.settings || {});
     out.settings.fristen = Object.assign(defaultSettings().fristen, (d.settings && d.settings.fristen) || {});
     out.settings.ui = Object.assign(defaultUI(), (d.settings && d.settings.ui) || {});
+    out.settings.email = Object.assign(defaultEmail(), (d.settings && d.settings.email) || {});
     ARRAYS.forEach(k => { if (!Array.isArray(out[k])) out[k] = []; });
     out.vorlagen = d.vorlagen && typeof d.vorlagen === 'object' ? d.vorlagen : {};
     out.meta = Object.assign({ lastBackup: null, erstellt: today() }, d.meta || {});
@@ -398,7 +419,7 @@
     opos: {
       erinnerung: 'Zahlungserinnerung versendet', mahnung1: '1. Mahnung versendet', mahnungLetzte: 'Letzte Mahnung versendet',
       abmahnung: 'Abmahnung (unpünktliche Zahlung) versendet', kuendigung: 'Kündigung versendet', anwalt: 'An Anwalt übergeben',
-      raten: 'Ratenzahlung vereinbart', erledigt: 'Fall erledigt'
+      raten: 'Ratenzahlung vereinbart', erledigt: 'Fall erledigt', emailMahnung: 'Mahnung per E-Mail versendet'
     },
     ih: {
       gemeldet: 'Schaden gemeldet', angefragt: 'Angebote angefragt', beauftragt: 'Handwerker beauftragt',
@@ -420,6 +441,10 @@
       case 'opos:erinnerung': case 'opos:mahnung1': case 'opos:mahnungLetzte': case 'opos:abmahnung': {
         const frist = ctx.frist || addDays(h, Number(f[aktion]) || 10);
         return { schliessen: true, frist, neu: [{ datum: addDays(frist, P), aufgabe: 'Zahlungseingang prüfen (' + (STUFEN[aktion] || 'Abmahnung') + ', Frist ' + fmtDatum(frist) + ')' }] };
+      }
+      case 'opos:emailMahnung': {
+        const frist = ctx.frist || addDays(h, Number(f.emailMahnung) || 7);
+        return { schliessen: true, frist, neu: [{ datum: addDays(frist, P), aufgabe: 'Zahlungseingang prüfen (E-Mail-Mahnung' + (ctx.abmahnung ? ' + Abmahnung' : '') + ', Frist ' + fmtDatum(frist) + ')' }] };
       }
       case 'opos:kuendigung': {
         const frist = ctx.frist || addDays(h, Number(f.kuendigung) || 14);
@@ -480,7 +505,8 @@
     const fall = findFall(data, bereich, refId);
     if (fall) {
       if (bereich === 'opos' && STUFEN[aktion]) fall.stufe = aktion;
-      if (bereich === 'opos' && aktion === 'abmahnung') fall.abmahnungAm = h;
+      if (bereich === 'opos' && (aktion === 'abmahnung' || (aktion === 'emailMahnung' && ctx.abmahnung))) fall.abmahnungAm = h;
+      if (bereich === 'opos' && aktion === 'emailMahnung' && ['neu', 'erinnerung'].includes(fall.stufe)) fall.stufe = 'mahnung1';
       if (bereich === 'opos' && aktion === 'raten') fall.raten = ctx.raten || [];
       if (bereich === 'opos' && regel.frist) fall.frist = regel.frist;
       if (bereich === 'ih' && IH_STATUS[aktion]) fall.status = aktion;
@@ -862,7 +888,7 @@
     mieterName, briefanrede,
     defaultSettings, emptyData, normalize, migratePrototype, stufeAusText,
     offenSumme, kuendigungsCheck, verteileZahlung, kautionsabrechnung, verjaehrung, kautionAmpel, ratenplan,
-    wvDatum, createWV, completeWV, snoozeWV, setWVDatum, plusEinheit, WV_EINHEITEN, defaultUI, closeWV, offeneWV, addVerlauf, wvRegeln, applyAction, findFall,
+    monateText, defaultEmail, wvDatum, createWV, completeWV, snoozeWV, setWVDatum, plusEinheit, WV_EINHEITEN, defaultUI, closeWV, offeneWV, addVerlauf, wvRegeln, applyAction, findFall,
     getPath, vorlageZuHTML, vorlageZuText,
     parseCSV, guessMapping, typAusText, importOPOS, normName, nameAufteilen, parseMietzeit, parseSaldo, parseWV, erkenneFormat, titelMieter, parseJsonBlatt, parseSaldenBlatt, findeMieter, saldoAbgleich, importSalden, asciiDateiname, buildEML
   };

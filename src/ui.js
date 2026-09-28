@@ -507,7 +507,7 @@
   /* ---------- Einstellungen ---------- */
   const FRIST_LABEL = {
     erinnerung: 'Zahlungserinnerung: Zahlungsfrist (Tage)', mahnung1: '1. Mahnung: Zahlungsfrist (Tage)', mahnungLetzte: 'Letzte Mahnung: Zahlungsfrist (Tage)',
-    abmahnung: 'Abmahnung: Prüffrist (Tage)', kuendigung: 'Kündigung: Räumungs-/Prüffrist (Tage)', anwalt: 'Anwalt: Sachstand nach (Tagen)',
+    emailMahnung: 'E-Mail-Mahnung (✉ Mahnen): Zahlungsfrist (Tage)', abmahnung: 'Abmahnung: Prüffrist (Tage)', kuendigung: 'Kündigung: Räumungs-/Prüffrist (Tage)', anwalt: 'Anwalt: Sachstand nach (Tagen)',
     angebot: 'IH: Angebot eingegangen? nach (Tagen)', ausfuehrung: 'IH: Ausführung prüfen ohne Termin (Tage)', rechnung: 'IH: Rechnung prüfen nach Erledigung (Tage)',
     ihMieter: 'IH: Frist Anfrage an Handwerker (Tage)', weiterbelastung: 'IH: Zahlungsfrist Weiterbelastung (Tage)',
     kautionAbrechnungMonate: 'Kaution: Abrechnung nach Übergabe (Monate)', auszahlung: 'Kaution: Auszahlung prüfen nach (Tagen)', bankverbindung: 'Kaution: Frist Bankverbindung (Tage)'
@@ -515,6 +515,18 @@
 
   const KACHELN = [['ueber', 'überfällig'], ['heute', 'heute fällig'], ['w7', 'in 7 Tagen'], ['opos', 'WV OPOS'], ['ih', 'WV Instandhaltung'], ['kaution', 'WV Kaution'], ['rueck', 'Rückstand gesamt'], ['verj', 'Kautionen mit naher Verjährung']];
   const DASH_ZEIT = [['faellig', 'fällig (bis heute)'], ['ueber', 'überfällig'], ['heute', 'heute'], ['7', 'nächste 7 Tage'], ['30', 'nächste 30 Tage'], ['alle', 'alle offenen']];
+  function emailHTML() {
+    const E = App.data.settings.email;
+    const felder = [
+      { k: 'methode', l: '✉ Mahnen öffnet', t: 'select', o: [['mailto', 'Outlook direkt (Standard-Mailprogramm)'], ['eml', '.eml-Entwurf zum Doppelklicken']],
+        hint: 'Outlook muss in Windows als Standard-App für E-Mail eingestellt sein.' },
+      { k: 'cc', l: 'Immer in Kopie (CC)', t: 'email', ph: 'optional' },
+      { k: 'abmahnungStandard', l: 'Abmahnungs-Absatz standardmäßig einfügen', t: 'checkbox', full: true },
+      { k: 'signatur', l: 'Grußformel und Signatur (unter jeder E-Mail-Mahnung)', t: 'textarea', rows: 12, full: true }
+    ];
+    return '<section class="card"><h2>E-Mail-Mahnung (✉ Mahnen)</h2><p class="small muted">Den Mail-Text selbst änderst du unten unter „Vorlagen“ → „E-Mail-Mahnung“.</p><form id="setEmail"><div class="grid">' + felder.map(x => feld(x, E[x.k])).join('') + '</div>' +
+      '<div class="actions"><button type="button" class="primary" data-act="emailSave">Speichern</button></div></form></section>';
+  }
   function anpassenHTML() {
     const u = UI();
     const felder = [
@@ -563,12 +575,13 @@
         '<div class="actions"><button type="button" class="primary" data-act="settingsSave" data-form="setFirma">Speichern</button></div></form></section>' +
         '<section class="card"><h2>Fristen & Regeln</h2><form id="setRegeln"><div class="grid">' + regelFelder.map(x => feld(x, vals[x.k.startsWith('fr_') ? x.k : x.k])).join('') + '</div>' +
         '<div class="actions"><button type="button" class="primary" data-act="settingsSave" data-form="setRegeln">Speichern</button></div></form></section></div>' +
-        anpassenHTML() +
+        emailHTML() + anpassenHTML() +
         '<section class="card"><div class="toolbar"><h2>Vorlagen (Textbausteine)</h2><select data-change="vorlageWahl">' + vorlagenOpt + '</select>' +
         (v.geaendert ? H.chip('angepasst', 'gelb') : H.chip('Standard')) + '</div>' +
         '<div class="vorlagen"><div><form id="vorlForm"><label class="fld full"><span>Betreff</span><input name="betreff" value="' + esc(v.betreff) + '"></label>' +
         '<label class="fld full"><span>Brieftext <small class="muted">(**fett**, Leerzeile = Absatz)</small></span><textarea name="text" rows="18" id="vorlText">' + esc(v.text) + '</textarea></label>' +
-        '<label class="fld full"><span>E-Mail-Text</span><textarea name="email" rows="7">' + esc(v.email || '') + '</textarea></label></form>' +
+        (v.nurEmail ? '<label class="fld full"><span>Abmahnungs-Absatz (für {{abmahnungAbsatz}})</span><textarea name="abmahnung" rows="9">' + esc(v.abmahnung || '') + '</textarea></label>'
+          : '<label class="fld full"><span>E-Mail-Text</span><textarea name="email" rows="7">' + esc(v.email || '') + '</textarea></label>') + '</form>' +
         '<div class="actions"><button data-act="vorlageReset" class="del">Auf Standard zurücksetzen</button><button data-act="vorlageVorschau">Vorschau aktualisieren</button><button class="primary" data-act="vorlageSave">Vorlage speichern</button></div>' +
         '<details><summary>Platzhalter (klicken zum Einfügen)</summary><div class="platzhalter">' + D.PLATZHALTER.map(([k, l]) => '<button class="s" data-act="phInsert" data-k="' + k + '" title="' + esc(l) + '">{{' + k + '}}</button>').join('') + '</div></details></div>' +
         '<iframe id="vorlPrev" class="docframe small" title="Vorschau"></iframe></div></section>' +
@@ -585,6 +598,7 @@
     }
   };
   Object.assign(App.act, {
+    emailSave() { Object.assign(App.data.settings.email, collect($('#setEmail'))); App.commit(); toast('E-Mail-Einstellungen gespeichert.'); },
     uiSave() {
       const v = collect($('#setUI')); const u = UI();
       const zeilen = t => String(t || '').split('\n').map(x => x.trim()).filter(Boolean);
@@ -613,7 +627,17 @@
       const v = collect($('#vorlForm'));
       const tmp = Object.assign({}, App.data, { vorlagen: Object.assign({}, App.data.vorlagen, { [id]: v }) });
       const fall = App.data[std.bereich].find(f => std.bereich !== 'ih' || f.handwerkerId) || App.data[std.bereich][0] || { posten: [], einbehalte: [] };
-      const doc = D.erzeuge(tmp, id, { bereich: std.bereich, fall, frist: C.addDays(C.today(), 10) });
+      const frist = C.addDays(C.today(), 10);
+      if (std.nurEmail) {
+        const ctx = D.kontext(tmp, { vorlageId: id, bereich: std.bereich, fall, frist });
+        const vl = D.vorlage(tmp, id);
+        const mt = C.monateText(fall.posten || []) || C.monatLabel(C.today().slice(0, 7));
+        Object.assign(ctx, { monate: mt, fuerMonat: /,| und /.test(mt) ? 'die Monate' : 'den Monat', betrag: fmtEUR(C.offenSumme(fall.posten || [], 'miete') || C.offenSumme(fall.posten || [])), abmahnungAbsatz: vl.abmahnung || '' });
+        const txt = 'Betreff: ' + C.vorlageZuText(vl.betreff, ctx) + '\n\n' + C.vorlageZuText(vl.text, ctx).replace(/\n{3,}/g, '\n\n').trim() + '\n\n' + App.data.settings.email.signatur;
+        fr.srcdoc = '<pre style="font-family:Calibri,Arial,sans-serif;font-size:11pt;white-space:pre-wrap;margin:16px">' + esc(txt) + '</pre>';
+        return;
+      }
+      const doc = D.erzeuge(tmp, id, { bereich: std.bereich, fall, frist });
       fr.srcdoc = D.standalone(doc.html, doc.titel).replace('<body>', '<body style="background:#dfe4ea;padding:8px;zoom:.72">');
     },
     vorlageSave() {

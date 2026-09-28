@@ -306,11 +306,31 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
       fristen: {
         erinnerung: 10, mahnung1: 10, mahnungLetzte: 7, abmahnung: 14, kuendigung: 14, anwalt: 14,
         angebot: 5, ausfuehrung: 10, rechnung: 14, ihMieter: 14, weiterbelastung: 14,
-        kautionAbrechnungMonate: 3, auszahlung: 14, bankverbindung: 14
+        kautionAbrechnungMonate: 3, auszahlung: 14, bankverbindung: 14, emailMahnung: 7
       },
       puffer: 3, mahngebuehr: 0, feiertageNRW: true, ratenVerzugTage: 14,
+      email: defaultEmail(),
       ui: defaultUI()
     };
+  }
+  /** E-Mail-Mahnung: Versandweg und Signatur */
+  function defaultEmail() {
+    return {
+      methode: 'mailto', abmahnungStandard: true, cc: '',
+      signatur: 'Mit freundlichen Grüßen\n\ni.A. H. Sahin\n\nHausverwaltung Dr. Marcel M. Sauren\nBrüsseler Ring 51\n52074 Aachen\n\nAchtung!\nTermine vor Ort nur nach vorheriger Vereinbarung.\n\n' +
+        'Telefonzeiten:\nMo.   10:00-11:30 / 15:00-18:00\nDi.   10:00-11:30 / 15:00-18:00\nMi.   15:00-18:00\nDo.   10:00-11:30 / 15:00-18:00\nFr.   10:00-11:30 / 15:00-18:00\n\n' +
+        'Tel:   0241 7755-023\nMail-to: hausverwaltung2@haus-ac.de\n\n' +
+        'Diese E-Mail könnte vertrauliche und/oder rechtlich geschützte Informationen enthalten. Wenn Sie nicht der richtige Adressat sind oder diese E-Mail irrtümlich erhalten haben, informieren Sie bitte sofort den Absender und vernichten Sie diese Mail. Das unerlaubte Kopieren sowie die unbefugte Weitergabe dieser Mail sind nicht gestattet.'
+    };
+  }
+  /** Offene Mietmonate als Text: „August 2026“, „Juli und August 2026“, „Juni, Juli und August 2026“ */
+  function monateText(posten) {
+    const ym = Array.from(new Set((posten || []).filter(p => p.typ === 'miete' && round2(p.offen) > 0 && p.faellig).map(p => p.faellig.slice(0, 7)))).sort();
+    if (!ym.length) return '';
+    const jahre = new Set(ym.map(x => x.slice(0, 4)));
+    const labels = ym.map(x => jahre.size === 1 ? monatLabel(x).split(' ')[0] : monatLabel(x));
+    const txt = labels.length === 1 ? labels[0] : labels.slice(0, -1).join(', ') + ' und ' + labels[labels.length - 1];
+    return jahre.size === 1 ? txt + ' ' + ym[0].slice(0, 4) : txt;
   }
   /** Anpassbare Oberfläche (Einstellungen → Anpassen) */
   function defaultUI() {
@@ -349,6 +369,7 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
     out.settings = Object.assign(defaultSettings(), d.settings || {});
     out.settings.fristen = Object.assign(defaultSettings().fristen, (d.settings && d.settings.fristen) || {});
     out.settings.ui = Object.assign(defaultUI(), (d.settings && d.settings.ui) || {});
+    out.settings.email = Object.assign(defaultEmail(), (d.settings && d.settings.email) || {});
     ARRAYS.forEach(k => { if (!Array.isArray(out[k])) out[k] = []; });
     out.vorlagen = d.vorlagen && typeof d.vorlagen === 'object' ? d.vorlagen : {};
     out.meta = Object.assign({ lastBackup: null, erstellt: today() }, d.meta || {});
@@ -565,7 +586,7 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
     opos: {
       erinnerung: 'Zahlungserinnerung versendet', mahnung1: '1. Mahnung versendet', mahnungLetzte: 'Letzte Mahnung versendet',
       abmahnung: 'Abmahnung (unpünktliche Zahlung) versendet', kuendigung: 'Kündigung versendet', anwalt: 'An Anwalt übergeben',
-      raten: 'Ratenzahlung vereinbart', erledigt: 'Fall erledigt'
+      raten: 'Ratenzahlung vereinbart', erledigt: 'Fall erledigt', emailMahnung: 'Mahnung per E-Mail versendet'
     },
     ih: {
       gemeldet: 'Schaden gemeldet', angefragt: 'Angebote angefragt', beauftragt: 'Handwerker beauftragt',
@@ -587,6 +608,10 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
       case 'opos:erinnerung': case 'opos:mahnung1': case 'opos:mahnungLetzte': case 'opos:abmahnung': {
         const frist = ctx.frist || addDays(h, Number(f[aktion]) || 10);
         return { schliessen: true, frist, neu: [{ datum: addDays(frist, P), aufgabe: 'Zahlungseingang prüfen (' + (STUFEN[aktion] || 'Abmahnung') + ', Frist ' + fmtDatum(frist) + ')' }] };
+      }
+      case 'opos:emailMahnung': {
+        const frist = ctx.frist || addDays(h, Number(f.emailMahnung) || 7);
+        return { schliessen: true, frist, neu: [{ datum: addDays(frist, P), aufgabe: 'Zahlungseingang prüfen (E-Mail-Mahnung' + (ctx.abmahnung ? ' + Abmahnung' : '') + ', Frist ' + fmtDatum(frist) + ')' }] };
       }
       case 'opos:kuendigung': {
         const frist = ctx.frist || addDays(h, Number(f.kuendigung) || 14);
@@ -647,7 +672,8 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
     const fall = findFall(data, bereich, refId);
     if (fall) {
       if (bereich === 'opos' && STUFEN[aktion]) fall.stufe = aktion;
-      if (bereich === 'opos' && aktion === 'abmahnung') fall.abmahnungAm = h;
+      if (bereich === 'opos' && (aktion === 'abmahnung' || (aktion === 'emailMahnung' && ctx.abmahnung))) fall.abmahnungAm = h;
+      if (bereich === 'opos' && aktion === 'emailMahnung' && ['neu', 'erinnerung'].includes(fall.stufe)) fall.stufe = 'mahnung1';
       if (bereich === 'opos' && aktion === 'raten') fall.raten = ctx.raten || [];
       if (bereich === 'opos' && regel.frist) fall.frist = regel.frist;
       if (bereich === 'ih' && IH_STATUS[aktion]) fall.status = aktion;
@@ -1029,7 +1055,7 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
     mieterName, briefanrede,
     defaultSettings, emptyData, normalize, migratePrototype, stufeAusText,
     offenSumme, kuendigungsCheck, verteileZahlung, kautionsabrechnung, verjaehrung, kautionAmpel, ratenplan,
-    wvDatum, createWV, completeWV, snoozeWV, setWVDatum, plusEinheit, WV_EINHEITEN, defaultUI, closeWV, offeneWV, addVerlauf, wvRegeln, applyAction, findFall,
+    monateText, defaultEmail, wvDatum, createWV, completeWV, snoozeWV, setWVDatum, plusEinheit, WV_EINHEITEN, defaultUI, closeWV, offeneWV, addVerlauf, wvRegeln, applyAction, findFall,
     getPath, vorlageZuHTML, vorlageZuText,
     parseCSV, guessMapping, typAusText, importOPOS, normName, nameAufteilen, parseMietzeit, parseSaldo, parseWV, erkenneFormat, titelMieter, parseJsonBlatt, parseSaldenBlatt, findeMieter, saldoAbgleich, importSalden, asciiDateiname, buildEML
   };
@@ -1207,6 +1233,25 @@ Mit freundlichen Grüßen
 {{sachbearbeiter}}
 {{firma.firma}}`
     },
+    mail_mahnung: {
+      bereich: 'opos', titel: 'E-Mail-Mahnung (Mahnen-Knopf)', empfaenger: 'mieter', nurEmail: true,
+      betreff: 'Zahlungserinnerung – Miete {{monate}} – {{objekt.strasse}}{{mieter.whgKomma}}',
+      text: `Sehr geehrte Damen und Herren,
+
+nach Prüfung unserer Zahlungseingänge haben wir festgestellt, dass die Miete für {{fuerMonat}} {{monate}} in Höhe von {{betrag}} bislang nicht beglichen wurde.
+
+Wir bitten Sie höflich, den ausstehenden Betrag spätestens bis zum {{frist}} zu überweisen, um weitere Schritte zu vermeiden.
+{{abmahnungAbsatz}}
+Für Rückfragen stehen wir Ihnen selbstverständlich gerne zur Verfügung.`,
+      abmahnung: `
+Gleichzeitig möchten wir Sie auf einen wiederholt aufgetretenen Umstand hinweisen: Die Mietzahlungen werden regelmäßig verspätet geleistet. Wir nehmen dies zum Anlass, Sie hiermit ausdrücklich abzumahnen und darauf hinzuweisen, dass eine pünktliche Mietzahlung eine wesentliche Pflicht aus dem Mietverhältnis darstellt.
+
+Wir weisen Sie darauf hin, dass bei weiteren Pflichtverletzungen dieser Art wir uns gezwungen sehen könnten, weitere Schritte einzuleiten. Dies gilt ausdrücklich auch dann, wenn die ausstehenden Beträge nachträglich beglichen werden.
+
+Wir hoffen, dass es nicht dazu kommen wird, und erwarten Ihre künftige Mitwirkung zur vertragsgemäßen Erfüllung Ihrer Zahlungspflichten.
+`,
+      email: ''
+    },
     ih_anfrage: {
       bereich: 'ih', titel: 'Anfrage Angebot an Handwerker', empfaenger: 'handwerker',
       betreff: 'Anfrage Angebot: {{schaden.titel}} – {{objekt.strasse}}, {{objekt.plzort}}',
@@ -1375,7 +1420,7 @@ Mit freundlichen Grüßen
     ['objekt.eigentuemer', ''], ['firma.firma', ''], ['firma.tel', ''], ['firma.mail', ''], ['sachbearbeiter', ''],
     ['summe', 'offene Mietposten+Sonstige'], ['summeGesamt', 'inkl. Mahngebühr'], ['summeMiete', 'nur Mietposten'], ['postenTabelle', 'Tabelle offene Posten'],
     ['mahngebuehrSatz', 'Satz zur Mahngebühr (leer bei 0)'], ['kuendigungsgrund', 'aus Kündigungscheck'], ['ordentlichZum', '§ 573c-Termin'],
-    ['abmahnungDetails', 'Freitext'], ['ratenTabelle', ''], ['ratenSumme', ''], ['ratenVerzugTage', ''],
+    ['abmahnungDetails', 'Freitext'], ['monate', 'offene Mietmonate (E-Mail-Mahnung)'], ['fuerMonat', '„den Monat“ / „die Monate“'], ['betrag', 'Betrag (E-Mail-Mahnung)'], ['abmahnungAbsatz', 'Abmahnungs-Absatz oder leer'], ['ratenTabelle', ''], ['ratenSumme', ''], ['ratenVerzugTage', ''],
     ['schaden.titel', ''], ['schaden.beschreibung', ''], ['schaden.gemeldetAm', ''], ['schaden.dringlichkeitText', ''], ['handwerker.firma', ''],
     ['terminText', ''], ['angebotText', ''], ['rechnung.nr', ''], ['rechnung.datum', ''], ['weiterbelastungBetrag', ''],
     ['kaution.betrag', ''], ['kaution.auszahlung', ''], ['kaution.uebergabeAm', ''], ['kaution.auszahlungIban', ''], ['kautionTabelle', ''],
@@ -2160,7 +2205,7 @@ Mit freundlichen Grüßen
   /* ---------- Einstellungen ---------- */
   const FRIST_LABEL = {
     erinnerung: 'Zahlungserinnerung: Zahlungsfrist (Tage)', mahnung1: '1. Mahnung: Zahlungsfrist (Tage)', mahnungLetzte: 'Letzte Mahnung: Zahlungsfrist (Tage)',
-    abmahnung: 'Abmahnung: Prüffrist (Tage)', kuendigung: 'Kündigung: Räumungs-/Prüffrist (Tage)', anwalt: 'Anwalt: Sachstand nach (Tagen)',
+    emailMahnung: 'E-Mail-Mahnung (✉ Mahnen): Zahlungsfrist (Tage)', abmahnung: 'Abmahnung: Prüffrist (Tage)', kuendigung: 'Kündigung: Räumungs-/Prüffrist (Tage)', anwalt: 'Anwalt: Sachstand nach (Tagen)',
     angebot: 'IH: Angebot eingegangen? nach (Tagen)', ausfuehrung: 'IH: Ausführung prüfen ohne Termin (Tage)', rechnung: 'IH: Rechnung prüfen nach Erledigung (Tage)',
     ihMieter: 'IH: Frist Anfrage an Handwerker (Tage)', weiterbelastung: 'IH: Zahlungsfrist Weiterbelastung (Tage)',
     kautionAbrechnungMonate: 'Kaution: Abrechnung nach Übergabe (Monate)', auszahlung: 'Kaution: Auszahlung prüfen nach (Tagen)', bankverbindung: 'Kaution: Frist Bankverbindung (Tage)'
@@ -2168,6 +2213,18 @@ Mit freundlichen Grüßen
 
   const KACHELN = [['ueber', 'überfällig'], ['heute', 'heute fällig'], ['w7', 'in 7 Tagen'], ['opos', 'WV OPOS'], ['ih', 'WV Instandhaltung'], ['kaution', 'WV Kaution'], ['rueck', 'Rückstand gesamt'], ['verj', 'Kautionen mit naher Verjährung']];
   const DASH_ZEIT = [['faellig', 'fällig (bis heute)'], ['ueber', 'überfällig'], ['heute', 'heute'], ['7', 'nächste 7 Tage'], ['30', 'nächste 30 Tage'], ['alle', 'alle offenen']];
+  function emailHTML() {
+    const E = App.data.settings.email;
+    const felder = [
+      { k: 'methode', l: '✉ Mahnen öffnet', t: 'select', o: [['mailto', 'Outlook direkt (Standard-Mailprogramm)'], ['eml', '.eml-Entwurf zum Doppelklicken']],
+        hint: 'Outlook muss in Windows als Standard-App für E-Mail eingestellt sein.' },
+      { k: 'cc', l: 'Immer in Kopie (CC)', t: 'email', ph: 'optional' },
+      { k: 'abmahnungStandard', l: 'Abmahnungs-Absatz standardmäßig einfügen', t: 'checkbox', full: true },
+      { k: 'signatur', l: 'Grußformel und Signatur (unter jeder E-Mail-Mahnung)', t: 'textarea', rows: 12, full: true }
+    ];
+    return '<section class="card"><h2>E-Mail-Mahnung (✉ Mahnen)</h2><p class="small muted">Den Mail-Text selbst änderst du unten unter „Vorlagen“ → „E-Mail-Mahnung“.</p><form id="setEmail"><div class="grid">' + felder.map(x => feld(x, E[x.k])).join('') + '</div>' +
+      '<div class="actions"><button type="button" class="primary" data-act="emailSave">Speichern</button></div></form></section>';
+  }
   function anpassenHTML() {
     const u = UI();
     const felder = [
@@ -2216,12 +2273,13 @@ Mit freundlichen Grüßen
         '<div class="actions"><button type="button" class="primary" data-act="settingsSave" data-form="setFirma">Speichern</button></div></form></section>' +
         '<section class="card"><h2>Fristen & Regeln</h2><form id="setRegeln"><div class="grid">' + regelFelder.map(x => feld(x, vals[x.k.startsWith('fr_') ? x.k : x.k])).join('') + '</div>' +
         '<div class="actions"><button type="button" class="primary" data-act="settingsSave" data-form="setRegeln">Speichern</button></div></form></section></div>' +
-        anpassenHTML() +
+        emailHTML() + anpassenHTML() +
         '<section class="card"><div class="toolbar"><h2>Vorlagen (Textbausteine)</h2><select data-change="vorlageWahl">' + vorlagenOpt + '</select>' +
         (v.geaendert ? H.chip('angepasst', 'gelb') : H.chip('Standard')) + '</div>' +
         '<div class="vorlagen"><div><form id="vorlForm"><label class="fld full"><span>Betreff</span><input name="betreff" value="' + esc(v.betreff) + '"></label>' +
         '<label class="fld full"><span>Brieftext <small class="muted">(**fett**, Leerzeile = Absatz)</small></span><textarea name="text" rows="18" id="vorlText">' + esc(v.text) + '</textarea></label>' +
-        '<label class="fld full"><span>E-Mail-Text</span><textarea name="email" rows="7">' + esc(v.email || '') + '</textarea></label></form>' +
+        (v.nurEmail ? '<label class="fld full"><span>Abmahnungs-Absatz (für {{abmahnungAbsatz}})</span><textarea name="abmahnung" rows="9">' + esc(v.abmahnung || '') + '</textarea></label>'
+          : '<label class="fld full"><span>E-Mail-Text</span><textarea name="email" rows="7">' + esc(v.email || '') + '</textarea></label>') + '</form>' +
         '<div class="actions"><button data-act="vorlageReset" class="del">Auf Standard zurücksetzen</button><button data-act="vorlageVorschau">Vorschau aktualisieren</button><button class="primary" data-act="vorlageSave">Vorlage speichern</button></div>' +
         '<details><summary>Platzhalter (klicken zum Einfügen)</summary><div class="platzhalter">' + D.PLATZHALTER.map(([k, l]) => '<button class="s" data-act="phInsert" data-k="' + k + '" title="' + esc(l) + '">{{' + k + '}}</button>').join('') + '</div></details></div>' +
         '<iframe id="vorlPrev" class="docframe small" title="Vorschau"></iframe></div></section>' +
@@ -2238,6 +2296,7 @@ Mit freundlichen Grüßen
     }
   };
   Object.assign(App.act, {
+    emailSave() { Object.assign(App.data.settings.email, collect($('#setEmail'))); App.commit(); toast('E-Mail-Einstellungen gespeichert.'); },
     uiSave() {
       const v = collect($('#setUI')); const u = UI();
       const zeilen = t => String(t || '').split('\n').map(x => x.trim()).filter(Boolean);
@@ -2266,7 +2325,17 @@ Mit freundlichen Grüßen
       const v = collect($('#vorlForm'));
       const tmp = Object.assign({}, App.data, { vorlagen: Object.assign({}, App.data.vorlagen, { [id]: v }) });
       const fall = App.data[std.bereich].find(f => std.bereich !== 'ih' || f.handwerkerId) || App.data[std.bereich][0] || { posten: [], einbehalte: [] };
-      const doc = D.erzeuge(tmp, id, { bereich: std.bereich, fall, frist: C.addDays(C.today(), 10) });
+      const frist = C.addDays(C.today(), 10);
+      if (std.nurEmail) {
+        const ctx = D.kontext(tmp, { vorlageId: id, bereich: std.bereich, fall, frist });
+        const vl = D.vorlage(tmp, id);
+        const mt = C.monateText(fall.posten || []) || C.monatLabel(C.today().slice(0, 7));
+        Object.assign(ctx, { monate: mt, fuerMonat: /,| und /.test(mt) ? 'die Monate' : 'den Monat', betrag: fmtEUR(C.offenSumme(fall.posten || [], 'miete') || C.offenSumme(fall.posten || [])), abmahnungAbsatz: vl.abmahnung || '' });
+        const txt = 'Betreff: ' + C.vorlageZuText(vl.betreff, ctx) + '\n\n' + C.vorlageZuText(vl.text, ctx).replace(/\n{3,}/g, '\n\n').trim() + '\n\n' + App.data.settings.email.signatur;
+        fr.srcdoc = '<pre style="font-family:Calibri,Arial,sans-serif;font-size:11pt;white-space:pre-wrap;margin:16px">' + esc(txt) + '</pre>';
+        return;
+      }
+      const doc = D.erzeuge(tmp, id, { bereich: std.bereich, fall, frist });
       fr.srcdoc = D.standalone(doc.html, doc.titel).replace('<body>', '<body style="background:#dfe4ea;padding:8px;zoom:.72">');
     },
     vorlageSave() {
@@ -2482,8 +2551,9 @@ Mit freundlichen Grüßen
             return '<tr class="klick" data-act="openFall" data-b="opos" data-id="' + x.id + '"><td data-stop><input type="checkbox" data-change="oposSel" data-id="' + x.id + '"' + (f.sel[x.id] ? ' checked' : '') + '></td>' +
               '<td><b>' + esc(C.mieterName(m)) + '</b>' + (m.mietnr ? ' <small class="muted">' + esc(m.mietnr) + '</small>' : '') + '</td><td>' + esc(o ? o.bezeichnung : '–') + (m.whg ? ' · ' + esc(m.whg) : '') + '</td>' +
               '<td>' + stufeChip(x.stufe) + (m.mietende && m.mietende < C.today() ? ' ' + H.chip('ehemalig') : '') + (x.raten && x.raten.some(r => !r.bezahlt) ? ' ' + H.chip('Raten', 'blau') : '') + '</td><td class="r">' + fmtEUR(C.offenSumme(x.posten, 'miete')) + '</td><td class="r"><b>' + fmtEUR(offen) + '</b></td>' +
-              '<td>' + fmtDatum(aeltesteFaelligkeit(x)) + '</td><td>' + H.wvChip(wv) + '</td><td>' + (check.moeglich && x.stufe !== 'erledigt' ? H.chip('⚠ Kündigung mögl.', 'rot') : '') + '</td></tr>';
-          }).join('') + '</tbody><tfoot><tr><td></td><td colspan="4">' + list.length + ' Fälle</td><td class="r"><b>' + fmtEUR(summe) + '</b></td><td colspan="3"></td></tr></tfoot></table>'
+              '<td>' + fmtDatum(aeltesteFaelligkeit(x)) + '</td><td>' + H.wvChip(wv) + '</td><td>' + (check.moeglich && x.stufe !== 'erledigt' ? H.chip('⚠ Kündigung mögl.', 'rot') : '') + '</td>' +
+              '<td class="r">' + (x.stufe !== 'erledigt' && offen > 0 ? '<button class="s" data-act="oposMahnenMail" data-id="' + x.id + '" title="' + (m.email ? 'Mahnung an ' + esc(m.email) : 'keine E-Mail hinterlegt') + '">✉ Mahnen' + (m.email ? '' : ' <span class="rot-t">!</span>') + '</button>' : '') + '</td></tr>';
+          }).join('') + '</tbody><tfoot><tr><td></td><td colspan="4">' + list.length + ' Fälle</td><td class="r"><b>' + fmtEUR(summe) + '</b></td><td colspan="4"></td></tr></tfoot></table>'
           : H.leer('Keine Fälle. Legen Sie einen Fall an oder importieren Sie die OPOS-Liste aus Ihrer Verwaltungssoftware.')) + '</section>';
     },
     detail(id) {
@@ -2505,7 +2575,7 @@ Mit freundlichen Grüßen
         (x.frist ? '<p>Letzte Frist: <b>' + fmtDatum(x.frist) + '</b></p>' : '') +
         '<div class="pruef ' + (check.moeglich ? 'rot' : '') + '"><b>Kündigungscheck § 543 Abs. 2 S. 1 Nr. 3 BGB</b><br>' + esc(check.text) + '<br><small>' + esc(check.hinweis) + ' Nur Mietposten zählen. Schonfristzahlung (§ 569 Abs. 3 Nr. 2 BGB) beachten.</small></div></section>' +
         '<section class="card"><h3>Aktionen</h3><div class="btns">' +
-        briefBtn('erinnerung', 'Zahlungserinnerung') + briefBtn('mahnung1', '1. Mahnung') + briefBtn('mahnungLetzte', 'Letzte Mahnung') + briefBtn('kuendigung', 'Kündigung …') +
+        '<button class="primary" data-act="oposMahnenMail" data-id="' + id + '" title="öffnet Outlook mit fertiger Mahnung">✉ Mahnen</button>' + briefBtn('erinnerung', 'Zahlungserinnerung') + briefBtn('mahnung1', '1. Mahnung') + briefBtn('mahnungLetzte', 'Letzte Mahnung') + briefBtn('kuendigung', 'Kündigung …') +
         '<button data-act="oposBrief" data-id="' + id + '" data-v="abmahnung">Abmahnung (unpünktl.)</button><button data-act="oposRaten" data-id="' + id + '">Ratenzahlung …</button>' +
         '</div><div class="btns"><button class="primary" data-act="oposZahlung" data-id="' + id + '">€ Zahlung verbuchen</button><button data-act="oposAnwalt" data-id="' + id + '">An Anwalt übergeben</button>' +
         '<button data-act="oposStufe" data-id="' + id + '">Stufe setzen</button><button data-act="oposErledigt" data-id="' + id + '">Fall erledigt</button></div></section></div>' +
@@ -2818,6 +2888,64 @@ Mit freundlichen Grüßen
       st.mieterNeu + ' neue Mieter' + (st.mieterNeu ? ' <small class="muted">(bitte Monatsmiete, Anschrift und E-Mail in den Stammdaten ergänzen)</small>' : '') + '</li><li>' + st.uebersprungen + ' Zeilen übersprungen (kein offener Betrag / kein Mieter)</li></ul>' +
       (fall && fall.posten.some(p => p.saldo) ? '<p class="small muted">Der Fall hat zusätzlich einen Saldo aus der OPOS-Liste: Der Saldo-Posten wurde um die Einzelposten reduziert, die Summe offen bleibt gleich dem Listensaldo.</p>' : '') });
   }
+
+  /* ---------- Mahnen per E-Mail (Outlook) ---------- */
+  function mahnMail(f, v) {
+    const vl = D.vorlage(App.data, 'mail_mahnung');
+    const ctx = D.kontext(App.data, { vorlageId: 'mail_mahnung', bereich: 'opos', fall: f, frist: v.frist });
+    const mehrere = /,| und /.test(v.monate);
+    Object.assign(ctx, { monate: v.monate, fuerMonat: mehrere ? 'die Monate' : 'den Monat', betrag: fmtEUR(v.betrag), frist: fmtDatum(v.frist), abmahnungAbsatz: v.abmahnung ? vl.abmahnung || '' : '' });
+    const body = C.vorlageZuText(vl.text, ctx).replace(/\n{3,}/g, '\n\n').trim() + '\n\n' + (App.data.settings.email.signatur || '');
+    return { betreff: C.vorlageZuText(vl.betreff, ctx), text: body };
+  }
+  function mailOeffnen(to, betreff, text) {
+    const E = App.data.settings.email;
+    try { navigator.clipboard.writeText(text); } catch (e) { /* ohne Zwischenablage */ }
+    if (E.methode === 'eml') {
+      D.download(new Blob([C.buildEML({ to, cc: E.cc, subject: betreff, text, attachments: [] })], { type: 'message/rfc822' }), C.asciiDateiname('Mahnung ' + betreff.slice(0, 60)) + '.eml');
+      return 'eml';
+    }
+    const url = 'mailto:' + encodeURIComponent(to).replace(/%40/g, '@') + '?' + (E.cc ? 'cc=' + encodeURIComponent(E.cc) + '&' : '') +
+      'subject=' + encodeURIComponent(betreff) + '&body=' + encodeURIComponent(text.replace(/\r?\n/g, '\r\n'));
+    const a = document.createElement('a'); a.href = url; document.body.appendChild(a); a.click(); a.remove();
+    return url.length > 2000 ? 'lang' : 'mailto';
+  }
+  App.act.oposMahnenMail = async function (ds) {
+    const f = H.fall('opos', ds.id); const m = H.mieter(f.mieterId) || {}; const S2 = App.data.settings;
+    const mieteOffen = C.offenSumme(f.posten, 'miete');
+    const werte = {
+      to: m.email || '', monate: C.monateText(f.posten) || C.monatLabel(C.today().slice(0, 7)), betrag: mieteOffen > 0 ? mieteOffen : C.offenSumme(f.posten),
+      frist: C.addDays(C.today(), Number(S2.fristen.emailMahnung) || 7), abmahnung: S2.email.abmahnungStandard
+    };
+    let manuell = false;
+    const v = await App.formModal('✉ Mahnen – ' + C.mieterName(m), [
+      { k: 'to', l: 'Empfänger (E-Mail)', t: 'email', full: true, hint: m.email ? '' : '<span class="rot-t">Keine E-Mail beim Mieter hinterlegt</span> – hier eintragen, sie wird beim Mieter gespeichert.' },
+      { k: 'monate', l: 'Miete für den Monat', req: true, hint: 'aus den offenen Mietposten' }, { k: 'betrag', l: 'in Höhe von (€)', t: 'money', req: true },
+      { k: 'frist', l: 'zu zahlen bis', t: 'date', req: true }, { k: 'abmahnung', l: 'Abmahnung wegen verspäteter Zahlungen einfügen', t: 'checkbox' },
+      { k: 'html', t: 'html', html: '<label class="fld full"><span>Mail-Text (hier noch änderbar) <button type="button" class="s" id="mailNeu">↺ neu erzeugen</button></span><textarea name="mailText" id="mailText" rows="15"></textarea></label>' }
+    ], werte, { wide: true, ok: '✉ In Outlook öffnen', onOpen(d) {
+      const form = d.querySelector('form'); const ta = d.querySelector('#mailText');
+      const upd = force => { if (manuell && !force) return; const x = App.collect(form); ta.value = mahnMail(f, x).text; manuell = false; };
+      ta.addEventListener('input', () => { manuell = true; });
+      form.addEventListener('change', e => { if (e.target !== ta) upd(); });
+      form.addEventListener('input', e => { if (e.target !== ta && e.target.type !== 'checkbox') upd(); });
+      d.querySelector('#mailNeu').onclick = () => upd(true);
+      upd(true);
+    } });
+    if (!v) return;
+    if (!v.to && !await App.confirm('Keine Empfänger-Adresse. Outlook trotzdem öffnen (Empfänger dort eintragen)?')) return;
+    if (v.to && !m.email) { m.email = v.to; App.save(); }
+    const mail = mahnMail(f, v);
+    const art = mailOeffnen(v.to, mail.betreff, v.mailText || mail.text);
+    App.toast(art === 'eml' ? 'E-Mail-Entwurf (.eml) gespeichert – per Doppelklick öffnen.' : art === 'lang'
+      ? 'Outlook wird geöffnet. Der Text ist zusätzlich in der Zwischenablage – falls er in der Mail fehlt oder abgeschnitten ist: Strg+V.'
+      : 'Outlook wird geöffnet (Text auch in der Zwischenablage).', 'ok', 9000);
+    if (await App.confirm('Mahnung an ' + esc(v.to || 'den Mieter') + ' als versendet verbuchen?<br><small class="muted">Verlauf + WV „Zahlungseingang prüfen“ zum ' + fmtDatum(C.addDays(v.frist, Number(S2.puffer) || 0)) + '</small>', 'Ja, verbuchen', 'Nein')) {
+      C.applyAction(App.data, 'opos', f.id, 'emailMahnung', { frist: v.frist, abmahnung: v.abmahnung,
+        verlaufText: 'Mahnung per E-Mail an ' + (v.to || '?') + ': Miete ' + v.monate + ', ' + fmtEUR(v.betrag) + ', Frist ' + fmtDatum(v.frist) + (v.abmahnung ? ' – inkl. Abmahnung (verspätete Zahlungen)' : '') });
+      App.commit(); App.toast('Verbucht – WV angelegt.');
+    }
+  };
 
   function mietenAnlegen(f, ab, anzahl, betrag) {
     for (let i = 0; i < anzahl; i++) {

@@ -167,6 +167,25 @@ Mit freundlichen Grüßen
 {{sachbearbeiter}}
 {{firma.firma}}`
     },
+    mail_mahnung: {
+      bereich: 'opos', titel: 'E-Mail-Mahnung (Mahnen-Knopf)', empfaenger: 'mieter', nurEmail: true,
+      betreff: 'Zahlungserinnerung – Miete {{monate}} – {{objekt.strasse}}{{mieter.whgKomma}}',
+      text: `Sehr geehrte Damen und Herren,
+
+nach Prüfung unserer Zahlungseingänge haben wir festgestellt, dass die Miete für {{fuerMonat}} {{monate}} in Höhe von {{betrag}} bislang nicht beglichen wurde.
+
+Wir bitten Sie höflich, den ausstehenden Betrag spätestens bis zum {{frist}} zu überweisen, um weitere Schritte zu vermeiden.
+{{abmahnungAbsatz}}
+Für Rückfragen stehen wir Ihnen selbstverständlich gerne zur Verfügung.`,
+      abmahnung: `
+Gleichzeitig möchten wir Sie auf einen wiederholt aufgetretenen Umstand hinweisen: Die Mietzahlungen werden regelmäßig verspätet geleistet. Wir nehmen dies zum Anlass, Sie hiermit ausdrücklich abzumahnen und darauf hinzuweisen, dass eine pünktliche Mietzahlung eine wesentliche Pflicht aus dem Mietverhältnis darstellt.
+
+Wir weisen Sie darauf hin, dass bei weiteren Pflichtverletzungen dieser Art wir uns gezwungen sehen könnten, weitere Schritte einzuleiten. Dies gilt ausdrücklich auch dann, wenn die ausstehenden Beträge nachträglich beglichen werden.
+
+Wir hoffen, dass es nicht dazu kommen wird, und erwarten Ihre künftige Mitwirkung zur vertragsgemäßen Erfüllung Ihrer Zahlungspflichten.
+`,
+      email: ''
+    },
     ih_anfrage: {
       bereich: 'ih', titel: 'Anfrage Angebot an Handwerker', empfaenger: 'handwerker',
       betreff: 'Anfrage Angebot: {{schaden.titel}} – {{objekt.strasse}}, {{objekt.plzort}}',
@@ -335,7 +354,7 @@ Mit freundlichen Grüßen
     ['objekt.eigentuemer', ''], ['firma.firma', ''], ['firma.tel', ''], ['firma.mail', ''], ['sachbearbeiter', ''],
     ['summe', 'offene Mietposten+Sonstige'], ['summeGesamt', 'inkl. Mahngebühr'], ['summeMiete', 'nur Mietposten'], ['postenTabelle', 'Tabelle offene Posten'],
     ['mahngebuehrSatz', 'Satz zur Mahngebühr (leer bei 0)'], ['kuendigungsgrund', 'aus Kündigungscheck'], ['ordentlichZum', '§ 573c-Termin'],
-    ['abmahnungDetails', 'Freitext'], ['ratenTabelle', ''], ['ratenSumme', ''], ['ratenVerzugTage', ''],
+    ['abmahnungDetails', 'Freitext'], ['monate', 'offene Mietmonate (E-Mail-Mahnung)'], ['fuerMonat', '„den Monat“ / „die Monate“'], ['betrag', 'Betrag (E-Mail-Mahnung)'], ['abmahnungAbsatz', 'Abmahnungs-Absatz oder leer'], ['ratenTabelle', ''], ['ratenSumme', ''], ['ratenVerzugTage', ''],
     ['schaden.titel', ''], ['schaden.beschreibung', ''], ['schaden.gemeldetAm', ''], ['schaden.dringlichkeitText', ''], ['handwerker.firma', ''],
     ['terminText', ''], ['angebotText', ''], ['rechnung.nr', ''], ['rechnung.datum', ''], ['weiterbelastungBetrag', ''],
     ['kaution.betrag', ''], ['kaution.auszahlung', ''], ['kaution.uebergabeAm', ''], ['kaution.auszahlungIban', ''], ['kautionTabelle', ''],

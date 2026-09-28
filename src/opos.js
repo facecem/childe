@@ -41,8 +41,9 @@
             return '<tr class="klick" data-act="openFall" data-b="opos" data-id="' + x.id + '"><td data-stop><input type="checkbox" data-change="oposSel" data-id="' + x.id + '"' + (f.sel[x.id] ? ' checked' : '') + '></td>' +
               '<td><b>' + esc(C.mieterName(m)) + '</b>' + (m.mietnr ? ' <small class="muted">' + esc(m.mietnr) + '</small>' : '') + '</td><td>' + esc(o ? o.bezeichnung : '–') + (m.whg ? ' · ' + esc(m.whg) : '') + '</td>' +
               '<td>' + stufeChip(x.stufe) + (m.mietende && m.mietende < C.today() ? ' ' + H.chip('ehemalig') : '') + (x.raten && x.raten.some(r => !r.bezahlt) ? ' ' + H.chip('Raten', 'blau') : '') + '</td><td class="r">' + fmtEUR(C.offenSumme(x.posten, 'miete')) + '</td><td class="r"><b>' + fmtEUR(offen) + '</b></td>' +
-              '<td>' + fmtDatum(aeltesteFaelligkeit(x)) + '</td><td>' + H.wvChip(wv) + '</td><td>' + (check.moeglich && x.stufe !== 'erledigt' ? H.chip('⚠ Kündigung mögl.', 'rot') : '') + '</td></tr>';
-          }).join('') + '</tbody><tfoot><tr><td></td><td colspan="4">' + list.length + ' Fälle</td><td class="r"><b>' + fmtEUR(summe) + '</b></td><td colspan="3"></td></tr></tfoot></table>'
+              '<td>' + fmtDatum(aeltesteFaelligkeit(x)) + '</td><td>' + H.wvChip(wv) + '</td><td>' + (check.moeglich && x.stufe !== 'erledigt' ? H.chip('⚠ Kündigung mögl.', 'rot') : '') + '</td>' +
+              '<td class="r">' + (x.stufe !== 'erledigt' && offen > 0 ? '<button class="s" data-act="oposMahnenMail" data-id="' + x.id + '" title="' + (m.email ? 'Mahnung an ' + esc(m.email) : 'keine E-Mail hinterlegt') + '">✉ Mahnen' + (m.email ? '' : ' <span class="rot-t">!</span>') + '</button>' : '') + '</td></tr>';
+          }).join('') + '</tbody><tfoot><tr><td></td><td colspan="4">' + list.length + ' Fälle</td><td class="r"><b>' + fmtEUR(summe) + '</b></td><td colspan="4"></td></tr></tfoot></table>'
           : H.leer('Keine Fälle. Legen Sie einen Fall an oder importieren Sie die OPOS-Liste aus Ihrer Verwaltungssoftware.')) + '</section>';
     },
     detail(id) {
@@ -64,7 +65,7 @@
         (x.frist ? '<p>Letzte Frist: <b>' + fmtDatum(x.frist) + '</b></p>' : '') +
         '<div class="pruef ' + (check.moeglich ? 'rot' : '') + '"><b>Kündigungscheck § 543 Abs. 2 S. 1 Nr. 3 BGB</b><br>' + esc(check.text) + '<br><small>' + esc(check.hinweis) + ' Nur Mietposten zählen. Schonfristzahlung (§ 569 Abs. 3 Nr. 2 BGB) beachten.</small></div></section>' +
         '<section class="card"><h3>Aktionen</h3><div class="btns">' +
-        briefBtn('erinnerung', 'Zahlungserinnerung') + briefBtn('mahnung1', '1. Mahnung') + briefBtn('mahnungLetzte', 'Letzte Mahnung') + briefBtn('kuendigung', 'Kündigung …') +
+        '<button class="primary" data-act="oposMahnenMail" data-id="' + id + '" title="öffnet Outlook mit fertiger Mahnung">✉ Mahnen</button>' + briefBtn('erinnerung', 'Zahlungserinnerung') + briefBtn('mahnung1', '1. Mahnung') + briefBtn('mahnungLetzte', 'Letzte Mahnung') + briefBtn('kuendigung', 'Kündigung …') +
         '<button data-act="oposBrief" data-id="' + id + '" data-v="abmahnung">Abmahnung (unpünktl.)</button><button data-act="oposRaten" data-id="' + id + '">Ratenzahlung …</button>' +
         '</div><div class="btns"><button class="primary" data-act="oposZahlung" data-id="' + id + '">€ Zahlung verbuchen</button><button data-act="oposAnwalt" data-id="' + id + '">An Anwalt übergeben</button>' +
         '<button data-act="oposStufe" data-id="' + id + '">Stufe setzen</button><button data-act="oposErledigt" data-id="' + id + '">Fall erledigt</button></div></section></div>' +
@@ -377,6 +378,64 @@
       st.mieterNeu + ' neue Mieter' + (st.mieterNeu ? ' <small class="muted">(bitte Monatsmiete, Anschrift und E-Mail in den Stammdaten ergänzen)</small>' : '') + '</li><li>' + st.uebersprungen + ' Zeilen übersprungen (kein offener Betrag / kein Mieter)</li></ul>' +
       (fall && fall.posten.some(p => p.saldo) ? '<p class="small muted">Der Fall hat zusätzlich einen Saldo aus der OPOS-Liste: Der Saldo-Posten wurde um die Einzelposten reduziert, die Summe offen bleibt gleich dem Listensaldo.</p>' : '') });
   }
+
+  /* ---------- Mahnen per E-Mail (Outlook) ---------- */
+  function mahnMail(f, v) {
+    const vl = D.vorlage(App.data, 'mail_mahnung');
+    const ctx = D.kontext(App.data, { vorlageId: 'mail_mahnung', bereich: 'opos', fall: f, frist: v.frist });
+    const mehrere = /,| und /.test(v.monate);
+    Object.assign(ctx, { monate: v.monate, fuerMonat: mehrere ? 'die Monate' : 'den Monat', betrag: fmtEUR(v.betrag), frist: fmtDatum(v.frist), abmahnungAbsatz: v.abmahnung ? vl.abmahnung || '' : '' });
+    const body = C.vorlageZuText(vl.text, ctx).replace(/\n{3,}/g, '\n\n').trim() + '\n\n' + (App.data.settings.email.signatur || '');
+    return { betreff: C.vorlageZuText(vl.betreff, ctx), text: body };
+  }
+  function mailOeffnen(to, betreff, text) {
+    const E = App.data.settings.email;
+    try { navigator.clipboard.writeText(text); } catch (e) { /* ohne Zwischenablage */ }
+    if (E.methode === 'eml') {
+      D.download(new Blob([C.buildEML({ to, cc: E.cc, subject: betreff, text, attachments: [] })], { type: 'message/rfc822' }), C.asciiDateiname('Mahnung ' + betreff.slice(0, 60)) + '.eml');
+      return 'eml';
+    }
+    const url = 'mailto:' + encodeURIComponent(to).replace(/%40/g, '@') + '?' + (E.cc ? 'cc=' + encodeURIComponent(E.cc) + '&' : '') +
+      'subject=' + encodeURIComponent(betreff) + '&body=' + encodeURIComponent(text.replace(/\r?\n/g, '\r\n'));
+    const a = document.createElement('a'); a.href = url; document.body.appendChild(a); a.click(); a.remove();
+    return url.length > 2000 ? 'lang' : 'mailto';
+  }
+  App.act.oposMahnenMail = async function (ds) {
+    const f = H.fall('opos', ds.id); const m = H.mieter(f.mieterId) || {}; const S2 = App.data.settings;
+    const mieteOffen = C.offenSumme(f.posten, 'miete');
+    const werte = {
+      to: m.email || '', monate: C.monateText(f.posten) || C.monatLabel(C.today().slice(0, 7)), betrag: mieteOffen > 0 ? mieteOffen : C.offenSumme(f.posten),
+      frist: C.addDays(C.today(), Number(S2.fristen.emailMahnung) || 7), abmahnung: S2.email.abmahnungStandard
+    };
+    let manuell = false;
+    const v = await App.formModal('✉ Mahnen – ' + C.mieterName(m), [
+      { k: 'to', l: 'Empfänger (E-Mail)', t: 'email', full: true, hint: m.email ? '' : '<span class="rot-t">Keine E-Mail beim Mieter hinterlegt</span> – hier eintragen, sie wird beim Mieter gespeichert.' },
+      { k: 'monate', l: 'Miete für den Monat', req: true, hint: 'aus den offenen Mietposten' }, { k: 'betrag', l: 'in Höhe von (€)', t: 'money', req: true },
+      { k: 'frist', l: 'zu zahlen bis', t: 'date', req: true }, { k: 'abmahnung', l: 'Abmahnung wegen verspäteter Zahlungen einfügen', t: 'checkbox' },
+      { k: 'html', t: 'html', html: '<label class="fld full"><span>Mail-Text (hier noch änderbar) <button type="button" class="s" id="mailNeu">↺ neu erzeugen</button></span><textarea name="mailText" id="mailText" rows="15"></textarea></label>' }
+    ], werte, { wide: true, ok: '✉ In Outlook öffnen', onOpen(d) {
+      const form = d.querySelector('form'); const ta = d.querySelector('#mailText');
+      const upd = force => { if (manuell && !force) return; const x = App.collect(form); ta.value = mahnMail(f, x).text; manuell = false; };
+      ta.addEventListener('input', () => { manuell = true; });
+      form.addEventListener('change', e => { if (e.target !== ta) upd(); });
+      form.addEventListener('input', e => { if (e.target !== ta && e.target.type !== 'checkbox') upd(); });
+      d.querySelector('#mailNeu').onclick = () => upd(true);
+      upd(true);
+    } });
+    if (!v) return;
+    if (!v.to && !await App.confirm('Keine Empfänger-Adresse. Outlook trotzdem öffnen (Empfänger dort eintragen)?')) return;
+    if (v.to && !m.email) { m.email = v.to; App.save(); }
+    const mail = mahnMail(f, v);
+    const art = mailOeffnen(v.to, mail.betreff, v.mailText || mail.text);
+    App.toast(art === 'eml' ? 'E-Mail-Entwurf (.eml) gespeichert – per Doppelklick öffnen.' : art === 'lang'
+      ? 'Outlook wird geöffnet. Der Text ist zusätzlich in der Zwischenablage – falls er in der Mail fehlt oder abgeschnitten ist: Strg+V.'
+      : 'Outlook wird geöffnet (Text auch in der Zwischenablage).', 'ok', 9000);
+    if (await App.confirm('Mahnung an ' + esc(v.to || 'den Mieter') + ' als versendet verbuchen?<br><small class="muted">Verlauf + WV „Zahlungseingang prüfen“ zum ' + fmtDatum(C.addDays(v.frist, Number(S2.puffer) || 0)) + '</small>', 'Ja, verbuchen', 'Nein')) {
+      C.applyAction(App.data, 'opos', f.id, 'emailMahnung', { frist: v.frist, abmahnung: v.abmahnung,
+        verlaufText: 'Mahnung per E-Mail an ' + (v.to || '?') + ': Miete ' + v.monate + ', ' + fmtEUR(v.betrag) + ', Frist ' + fmtDatum(v.frist) + (v.abmahnung ? ' – inkl. Abmahnung (verspätete Zahlungen)' : '') });
+      App.commit(); App.toast('Verbucht – WV angelegt.');
+    }
+  };
 
   function mietenAnlegen(f, ab, anzahl, betrag) {
     for (let i = 0; i < anzahl; i++) {

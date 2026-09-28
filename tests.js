@@ -175,6 +175,16 @@ C.snoozeWV(d, w2.id, 1, '2026-09-28'); eq(w2.datum, '2026-10-05', 'snooze +1 Tag
 C.setWVDatum(d, w2.id, '2026-12-25'); eq(w2.datum, '2026-12-28', 'festes Datum → Werktag');
 eq(C.normalize({ settings: { ui: { wvButtons: [2, 5] } } }).settings.ui.tabs.length, 6, 'UI-Einstellungen mit Standard ergänzt');
 
+section('E-Mail-Mahnung');
+const mp = [p('2026-08-03', 800), p('2026-09-03', 800), p('2026-07-03', 0), p('2026-06-01', 50, 'sonstig')];
+eq(C.monateText(mp), 'August und September 2026', 'Monatstext zwei Monate');
+eq(C.monateText([p('2025-12-03', 1), p('2026-01-03', 1), p('2026-02-03', 1)]), 'Dezember 2025, Januar 2026 und Februar 2026', 'Monatstext über Jahreswechsel');
+eq(C.monateText([p('2026-09-03', 800)]), 'September 2026', 'Monatstext ein Monat');
+d = testData();
+C.applyAction(d, 'opos', 'o1', 'emailMahnung', { heute: '2026-09-28', abmahnung: true });
+eq([d.opos[0].stufe, d.opos[0].abmahnungAm, C.offeneWV(d, 'opos', 'o1').map(w => w.datum)], ['mahnung1', '2026-09-28', ['2026-10-08']], 'E-Mail-Mahnung: Stufe, Abmahnung, WV Frist 7 + 3');
+truthy(/Sauren/.test(C.normalize({}).settings.email.signatur), 'Signatur-Standard');
+
 section('Vorlagen');
 const html = C.vorlageZuHTML('Hallo {{m.name}},\n\n{{postenTabelle}}\n\nSumme **{{s}}** <x>\nZeile {{fehlt}}', { m: { name: 'A & B' }, postenTabelle: '<table>\n<tr><td>1</td></tr></table>', s: '1,00 €' });
 eq(html, '<p>Hallo A &amp; B,</p>\n<table><tr><td>1</td></tr></table>\n<p>Summe <b>1,00 €</b> &lt;x&gt;<br>Zeile <mark>{{fehlt}}</mark></p>', 'vorlageZuHTML');
