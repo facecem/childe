@@ -172,6 +172,15 @@
     leer: text => '<div class="leer">' + text + '</div>'
   };
 
+  /* ---------- „Meine“ WV: Instandhaltung nur mit eigenem SB (Einstellungen → Anpassen) ---------- */
+  App.istMeine = function (w) {
+    const u = UI(), ich = String(u.meinSB || '').trim().toLowerCase();
+    if (!ich || w.bereich !== 'ih') return true;
+    const f = H.fall('ih', w.refId); const sb = String((f && f.sb) || '').trim().toLowerCase();
+    return sb ? sb === ich : u.ohneSbZeigen !== false;
+  };
+  const meineWV = () => App.data.wv.filter(w => !App.f.dash.alleSB ? App.istMeine(w) : true);
+
   /* ---------- WV-Tabelle (Dashboard + Fälle) ---------- */
   const EINHEIT_KURZ = { tage: '', werktage: ' WT', wochen: ' Wo', monate: ' Mo' };
   function snoozeButtons(id) {
@@ -330,7 +339,7 @@
   App.views.dashboard = {
     render() {
       const d = App.data, t = C.today(), f = App.f.dash;
-      const offen = d.wv.filter(w => w.status === 'offen');
+      const offen = meineWV().filter(w => w.status === 'offen');
       const inObj = w => !f.objekt || (H.objektVonFall(w.bereich, H.fall(w.bereich, w.refId)) || {}).id === f.objekt;
       const cnt = { ueber: offen.filter(w => w.datum < t).length, heute: offen.filter(w => w.datum === t).length, w7: offen.filter(w => w.datum > t && w.datum <= C.addDays(t, 7)).length };
       const rueck = C.sum(d.opos.filter(x => x.stufe !== 'erledigt'), x => C.offenSumme(x.posten));
@@ -343,7 +352,7 @@
       else if (f.zeit === 'faellig') list = list.filter(w => w.datum <= t);
       else if (f.zeit === '7') list = list.filter(w => w.datum <= C.addDays(t, 7));
       else if (f.zeit === '30') list = list.filter(w => w.datum <= C.addDays(t, 30));
-      else if (f.zeit === 'erledigt') list = d.wv.filter(w => w.status === 'erledigt').sort((a, b) => (b.erledigtAm || '').localeCompare(a.erledigtAm || '')).slice(0, 200);
+      else if (f.zeit === 'erledigt') list = meineWV().filter(w => w.status === 'erledigt').sort((a, b) => (b.erledigtAm || '').localeCompare(a.erledigtAm || '')).slice(0, 200);
       list = list.filter(w => (!f.bereich || w.bereich === f.bereich) && inObj(w));
       if (f.zeit !== 'erledigt') list.sort((a, b) => a.datum.localeCompare(b.datum));
       const kachel = (n, l, cls, act) => '<button class="kachel ' + cls + '" ' + act + '><b>' + n + '</b><span>' + l + '</span></button>';
@@ -366,6 +375,7 @@
         '<select data-filter="dash.zeit">' + [['faellig', 'fällig (bis heute)'], ['ueber', 'überfällig'], ['heute', 'heute'], ['7', 'nächste 7 Tage'], ['30', 'nächste 30 Tage'], ['alle', 'alle offenen'], ['erledigt', 'erledigte']]
           .map(([v, l]) => '<option value="' + v + '"' + (f.zeit === v ? ' selected' : '') + '>' + l + '</option>').join('') + '</select>' +
         '<select data-filter="dash.bereich"><option value="">alle Bereiche</option>' + Object.entries(C.BEREICHE).map(([v, l]) => '<option value="' + v + '"' + (f.bereich === v ? ' selected' : '') + '>' + l + '</option>').join('') + '</select>' +
+        (UI().meinSB ? '<select data-change="dashSB"><option value="">nur meine (' + esc(UI().meinSB) + ')</option><option value="1"' + (f.alleSB ? ' selected' : '') + '>alle Sachbearbeiter</option></select>' : '') +
         '<select data-filter="dash.objekt"><option value="">alle Objekte</option>' + H.objektOptionen(false).map(([v, l]) => '<option value="' + v + '"' + (f.objekt === v ? ' selected' : '') + '>' + esc(l) + '</option>').join('') + '</select>' +
         '<span class="sp"></span><button data-act="wvNeu">+ WV</button><button data-act="tagesliste">🖨 Tagesliste</button><button data-act="wvExcel">WV-Liste Excel</button></div>' +
         App.wvTabelle(list, { leer: f.zeit === 'faellig' ? 'Nichts fällig – alles erledigt. 🎉' : 'Keine Einträge für diesen Filter.' }) + '</section>';
@@ -376,7 +386,7 @@
     dashBereich(ds) { App.f.dash.bereich = ds.b; App.f.dash.zeit = 'alle'; App.render(); },
     tagesliste() {
       const t = C.today();
-      const list = App.data.wv.filter(w => w.status === 'offen' && w.datum <= t).sort((a, b) => a.datum.localeCompare(b.datum));
+      const list = meineWV().filter(w => w.status === 'offen' && w.datum <= t).sort((a, b) => a.datum.localeCompare(b.datum));
       const html = '<div style="font-family:Calibri,Arial,sans-serif;font-size:10.5pt;padding:15mm 15mm"><h2 style="margin:0 0 2mm">Tagesliste Wiedervorlagen – ' + fmtDatum(t) + '</h2><p style="margin:0 0 5mm;color:#555">' +
         esc(App.data.settings.firma) + ' · ' + list.length + ' fällige Vorgänge</p><table style="border-collapse:collapse;width:100%">' +
         '<tr>' + ['☐', 'WV', 'Bereich', 'Fall', 'Aufgabe', 'Notiz'].map(h => '<th style="text-align:left;border-bottom:1pt solid #000;padding:1.5mm">' + h + '</th>').join('') + '</tr>' +
@@ -385,7 +395,7 @@
       D.drucken(html, 'Tagesliste ' + fmtDatum(t));
     },
     async wvExcel() {
-      const zeilen = App.data.wv.slice().sort((a, b) => a.datum.localeCompare(b.datum)).map(w => {
+      const zeilen = meineWV().sort((a, b) => a.datum.localeCompare(b.datum)).map(w => {
         const f = H.fall(w.bereich, w.refId); const o = H.objektVonFall(w.bereich, f);
         return [fmtDatum(w.datum), C.BEREICHE[w.bereich], o ? o.bezeichnung : '', H.fallLabel(w.bereich, f), w.aufgabe, w.status, w.erstelltDurch, fmtDatum(w.erledigtAm)];
       });
@@ -616,6 +626,9 @@
       { k: 'verjaehrungWarnTage', l: 'Kaution: Warnung … Tage vor Verjährung', t: 'number', min: 1 },
       { k: 'wvAufgaben', l: 'Vorschläge für WV-Aufgaben (eine je Zeile)', t: 'textarea', rows: 5 },
       { k: 'gewerke', l: 'Gewerke (eine je Zeile)', t: 'textarea', rows: 5 },
+      { k: 'meinSB', l: 'Ich bin (SB)', list: 'dl_meinSB', hint: 'Dashboard und Instandhaltung zeigen dann nur Aufgaben/WV dieses Sachbearbeiters. Leer = alle.' },
+      { k: 'ohneSbZeigen', l: 'Instandhaltungs-Aufgaben ohne SB trotzdem anzeigen', t: 'checkbox' },
+      { k: 'html', t: 'html', html: '<datalist id="dl_meinSB">' + Array.from(new Set(App.data.ih.map(x => x.sb).filter(Boolean))).map(v => '<option value="' + esc(v) + '">').join('') + '</datalist>' },
       { k: 'startTab', l: 'Beim Öffnen anzeigen', t: 'select', o: TABS.filter(([k]) => k !== 'einst') },
       { k: 'dashZeit', l: 'Dashboard: WV-Filter beim Öffnen', t: 'select', o: DASH_ZEIT },
       { k: 'tabs', l: 'Sichtbare Bereiche', t: 'multi', o: TABS.filter(([k]) => k !== 'einst').map(([k, l]) => [k, esc(l)]) },
@@ -683,7 +696,9 @@
       const v = collect($('#setUI')); const u = UI();
       const zeilen = t => String(t || '').split('\n').map(x => x.trim()).filter(Boolean);
       const btn = String(v.wvButtons).split(/[,;\s]+/).map(Number).filter(n => n > 0 && n < 1000);
+      delete v.html;
       Object.assign(u, v, {
+        meinSB: String(v.meinSB || '').trim(),
         wvButtons: Array.from(new Set(btn)).slice(0, 12), wvAufgaben: zeilen(v.wvAufgaben), gewerke: zeilen(v.gewerke),
         neuWvTage: Number(v.neuWvTage) || 0, verjaehrungWarnTage: Number(v.verjaehrungWarnTage) || 30, schrift: Math.min(20, Math.max(11, Number(v.schrift) || 14.5))
       });
@@ -749,7 +764,8 @@
     }
   });
   Object.assign(App.change, {
-    vorlageWahl(el) { App.f.einst.vorlage = el.value; App.render(); }
+    vorlageWahl(el) { App.f.einst.vorlage = el.value; App.render(); },
+    dashSB(el) { App.f.dash.alleSB = !!el.value; App.render(); }
   });
   App.backupImport = async function (file) {
     if (!file) return;
@@ -826,7 +842,7 @@
   }
   App.render = function () {
     const nav = $('#nav'); const t = C.today();
-    const ueber = App.data.wv.filter(w => w.status === 'offen' && w.datum <= t);
+    const ueber = App.data.wv.filter(w => w.status === 'offen' && w.datum <= t && App.istMeine(w));
     applyTheme();
     if (!sichtbareTabs().some(([k]) => k === App.tab)) { App.tab = sichtbareTabs()[0][0]; App.detail = null; }
     nav.innerHTML = sichtbareTabs().map(([k, l], i) => {
@@ -847,7 +863,7 @@
   let _filterTimer;
   function init() {
     App.load();
-    App.tab = UI().startTab || 'dashboard'; App.f.dash.zeit = UI().dashZeit || 'faellig';
+    App.tab = UI().startTab || 'dashboard'; App.f.dash.zeit = UI().dashZeit || 'faellig'; App.f.ih.sb = UI().meinSB ? '_mein' : '';
     document.addEventListener('click', e => {
       const sb = e.target.closest('#sucheErg button'); if (sb) { e.preventDefault(); return sucheOeffnen(_treffer[+sb.dataset.i].act); }
       if (!e.target.closest('.suche')) $('#sucheErg').hidden = true;
