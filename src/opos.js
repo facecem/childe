@@ -15,6 +15,7 @@
     return null;
   }
   function aeltesteFaelligkeit(f) { const l = f.posten.filter(p => p.offen > 0 && p.faellig).map(p => p.faellig).sort(); return l[0] || ''; }
+  const mailVon = m => C.emailsZuMieter(App.data, m);
   const stufeChip = st => H.chip(S[st] || st, 'st-' + st);
 
   App.views.opos = {
@@ -42,7 +43,7 @@
               '<td><b>' + esc(C.mieterName(m)) + '</b>' + (m.mietnr ? ' <small class="muted">' + esc(m.mietnr) + '</small>' : '') + '</td><td>' + esc(o ? o.bezeichnung : '–') + (m.whg ? ' · ' + esc(m.whg) : '') + '</td>' +
               '<td>' + stufeChip(x.stufe) + (m.mietende && m.mietende < C.today() ? ' ' + H.chip('ehemalig') : '') + (x.raten && x.raten.some(r => !r.bezahlt) ? ' ' + H.chip('Raten', 'blau') : '') + '</td><td class="r">' + fmtEUR(C.offenSumme(x.posten, 'miete')) + '</td><td class="r"><b>' + fmtEUR(offen) + '</b></td>' +
               '<td>' + fmtDatum(aeltesteFaelligkeit(x)) + '</td><td>' + H.wvChip(wv) + '</td><td>' + (check.moeglich && x.stufe !== 'erledigt' ? H.chip('⚠ Kündigung mögl.', 'rot') : '') + '</td>' +
-              '<td class="r">' + (x.stufe !== 'erledigt' && offen > 0 ? '<button class="s" data-act="oposMahnenMail" data-id="' + x.id + '" title="' + (m.email ? 'Mahnung an ' + esc(m.email) : 'keine E-Mail hinterlegt') + '">✉ Mahnen' + (m.email ? '' : ' <span class="rot-t">!</span>') + '</button>' : '') + '</td></tr>';
+              '<td class="r">' + (x.stufe !== 'erledigt' && offen > 0 ? '<button class="s" data-act="oposMahnenMail" data-id="' + x.id + '" title="' + (mailVon(m) ? 'Mahnung an ' + esc(mailVon(m)) : 'keine E-Mail hinterlegt') + '">✉ Mahnen' + (mailVon(m) ? '' : ' <span class="rot-t">!</span>') + '</button>' : '') + '</td></tr>';
           }).join('') + '</tbody><tfoot><tr><td></td><td colspan="4">' + list.length + ' Fälle</td><td class="r"><b>' + fmtEUR(summe) + '</b></td><td colspan="4"></td></tr></tfoot></table>'
           : H.leer('Keine Fälle. Legen Sie einen Fall an oder importieren Sie die OPOS-Liste aus Ihrer Verwaltungssoftware.')) + '</section>';
     },
@@ -404,12 +405,13 @@
     const f = H.fall('opos', ds.id); const m = H.mieter(f.mieterId) || {}; const S2 = App.data.settings;
     const mieteOffen = C.offenSumme(f.posten, 'miete');
     const werte = {
-      to: m.email || '', monate: C.monateText(f.posten) || C.monatLabel(C.today().slice(0, 7)), betrag: mieteOffen > 0 ? mieteOffen : C.offenSumme(f.posten),
+      to: C.emailsZuMieter(App.data, m), monate: C.monateText(f.posten) || C.monatLabel(C.today().slice(0, 7)), betrag: mieteOffen > 0 ? mieteOffen : C.offenSumme(f.posten),
       frist: C.addDays(C.today(), Number(S2.fristen.emailMahnung) || 7), abmahnung: S2.email.abmahnungStandard
     };
     let manuell = false;
     const v = await App.formModal('✉ Mahnen – ' + C.mieterName(m), [
-      { k: 'to', l: 'Empfänger (E-Mail)', t: 'email', full: true, hint: m.email ? '' : '<span class="rot-t">Keine E-Mail beim Mieter hinterlegt</span> – hier eintragen, sie wird beim Mieter gespeichert.' },
+      { k: 'to', l: 'Empfänger (E-Mail, mehrere mit ; trennen)', full: true, hint: m.email ? (m.emailQuelle === 'telefonliste' ? 'aus der Telefonliste' + (App.data.meta.telefonlisteStand ? ' vom ' + fmtDatum(App.data.meta.telefonlisteStand) : '') : '')
+        : werte.to ? 'aus dem Adressbuch (Telefonliste)' : '<span class="rot-t">Keine E-Mail gefunden</span> – hier eintragen (wird beim Mieter gespeichert) oder Telefonliste unter Kontakte einlesen.' },
       { k: 'monate', l: 'Miete für den Monat', req: true, hint: 'aus den offenen Mietposten' }, { k: 'betrag', l: 'in Höhe von (€)', t: 'money', req: true },
       { k: 'frist', l: 'zu zahlen bis', t: 'date', req: true }, { k: 'abmahnung', l: 'Abmahnung wegen verspäteter Zahlungen einfügen', t: 'checkbox' },
       { k: 'html', t: 'html', html: '<label class="fld full"><span>Mail-Text (hier noch änderbar) <button type="button" class="s" id="mailNeu">↺ neu erzeugen</button></span><textarea name="mailText" id="mailText" rows="15"></textarea></label>' }
@@ -424,7 +426,7 @@
     } });
     if (!v) return;
     if (!v.to && !await App.confirm('Keine Empfänger-Adresse. Outlook trotzdem öffnen (Empfänger dort eintragen)?')) return;
-    if (v.to && !m.email) { m.email = v.to; App.save(); }
+    if (v.to && v.to !== m.email) { m.emailQuelle = !m.email && v.to === werte.to ? 'telefonliste' : 'manuell'; m.email = v.to; App.save(); }
     const mail = mahnMail(f, v);
     const art = mailOeffnen(v.to, mail.betreff, v.mailText || mail.text);
     App.toast(art === 'eml' ? 'E-Mail-Entwurf (.eml) gespeichert – per Doppelklick öffnen.' : art === 'lang'

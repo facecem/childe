@@ -189,11 +189,11 @@
   function emptyData() {
     return {
       version: DATA_VERSION, settings: defaultSettings(), vorlagen: {},
-      objekte: [], mieter: [], kontakte: [], wv: [], verlauf: [], opos: [], ih: [], kaution: [],
+      objekte: [], mieter: [], kontakte: [], adressbuch: [], wv: [], verlauf: [], opos: [], ih: [], kaution: [],
       meta: { lastBackup: null, erstellt: today() }
     };
   }
-  const ARRAYS = ['objekte', 'mieter', 'kontakte', 'wv', 'verlauf', 'opos', 'ih', 'kaution'];
+  const ARRAYS = ['objekte', 'mieter', 'kontakte', 'adressbuch', 'wv', 'verlauf', 'opos', 'ih', 'kaution'];
   function normalize(d) {
     const out = emptyData();
     if (!d || typeof d !== 'object') return out;
@@ -780,7 +780,7 @@
     const gesehen = new Set();
     const objektFuer = e => {
       if (o.objektId) return o.objektId;
-      const bez = e.pfkt ? 'PFkt. ' + e.pfkt : 'Import OPOS-Liste';
+      const bez = 'Import OPOS-Liste';
       let ob = data.objekte.find(x => x.bezeichnung === bez);
       if (!ob) { ob = { id: uid(), bezeichnung: bez, strasse: '', plzort: '', eigentuemer: '' }; data.objekte.push(ob); st.objekteNeu++; }
       return ob.id;
@@ -855,6 +855,145 @@
         if (offenSumme(f.posten) <= 0) { applyAction(data, 'opos', f.id, 'erledigt', { heute, verlaufText: 'Nicht mehr in der OPOS-Liste (Stand ' + fmtDatum(stand) + ') – erledigt' }); st.erledigt++; }
       });
     }
+    if ((data.adressbuch || []).length) Object.assign(st, adressbuchVerknuepfen(data));
+    return st;
+  }
+
+  /* ---------- Telefonliste (PDF) → Adressbuch ---------- */
+  const ANREDE_RE = /^(herrn?|frau|firma|eheleute|familie|herr und frau|frau und herr|herren|damen)$/i;
+  /**
+   * Telefonliste aus der Verwaltungssoftware zerlegen.
+   * pages: [[{ x, y, s }]] (Textstücke je Seite, y von unten). Spalten: links Anrede/Name/Anschrift,
+   * Mitte E-Mail, dann PFkt/Whg/AdrNr, rechts Rolle/Lage/„NACHNAME, VORNAME“.
+   */
+  function parseTelefonliste(pages) {
+    const out = { stand: '', objekte: [], personen: [] };
+    let obj = null, p = null, objOrt = false;
+    const fertig = () => {
+      if (!p) return;
+      const L = p._links; let i = -1;
+      L.forEach((t, k) => { if (/^([A-Z]{1,3}[\s-]+)?\d{4,5}\s+\S/.test(t)) i = k; });
+      let namen = L;
+      if (i >= 0) {
+        p.plzort = L[i].replace(/^(D|DE)[\s-]+/, '');
+        const hatStr = i >= 1 && /\d/.test(L[i - 1]) && !(i === 1 && ANREDE_RE.test(L[0]));
+        p.strasse = hatStr ? L[i - 1] : '';
+        namen = L.slice(0, hatStr ? i - 1 : i);
+      }
+      if (namen.length && ANREDE_RE.test(namen[0])) p.anrede = namen.shift().replace(/^Herrn$/i, 'Herr');
+      p.name = namen.join(' und ');
+      delete p._links;
+      if (p.adrNr || p.importName) out.personen.push(p);
+      p = null;
+    };
+    pages.forEach(items => {
+      const zeilen = [];
+      items.filter(it => String(it.s).trim() && it.y > 25).sort((a, b) => b.y - a.y || a.x - b.x).forEach(it => {
+        const z = zeilen.find(r => Math.abs(r.y - it.y) <= 2);
+        if (z) z.c.push(it); else zeilen.push({ y: it.y, c: [it] });
+      });
+      zeilen.forEach(z => {
+        const c = z.c.sort((a, b) => a.x - b.x).map(it => ({ x: it.x, s: String(it.s).trim() }));
+        const text = c.map(k => k.s).join(' ');
+        const st = text.match(/gültig ab:?\s*(\d{1,2}\.\d{1,2}\.\d{2,4})/i);
+        if (st) { out.stand = parseDatum(st[1]); return; }
+        if (/^Objekt\s*Nr\.?$/i.test(c[0].s) && c[1]) {
+          const nr = c[1].s;
+          if (!obj || obj.nr !== nr) { fertig(); obj = { nr, strasse: c.slice(2).map(k => k.s).join(' '), plzort: '' }; out.objekte.push(obj); objOrt = 'neu'; }
+          else objOrt = 'wiederholt'; // Seitenkopf wiederholt das Objekt – Block läuft weiter
+          return;
+        }
+        if (objOrt && /^[A-Z]{1,3}$/.test(c[0].s) && c[0].x < 90) { if (objOrt === 'neu') obj.plzort = c.slice(1).map(k => k.s).join(' '); objOrt = false; return; }
+        objOrt = false;
+        const mitte = c.filter(k => k.x >= 250 && k.x < 325), rechts = c.filter(k => k.x >= 325).map(k => k.s).join(' ');
+        const label = (mitte[0] || {}).s || '', wert = mitte.slice(1).map(k => k.s).join(' ');
+        if (/^PFkt/i.test(label)) {
+          fertig();
+          p = { objektNr: obj ? obj.nr : '', pfkt: wert, whg: '', adrNr: '', rolle: rechts, lage: '', importName: '', anrede: '', name: '', strasse: '', plzort: '', emails: [], _links: [] };
+        } else if (p && /^Whg/i.test(label)) { p.whg = wert; p.lage = rechts; }
+        else if (p && /^AdrNr/i.test(label)) { p.adrNr = wert; p.importName = rechts; }
+        if (!p) return;
+        const links = c.filter(k => k.x < 180).map(k => k.s).join(' ').replace(/\s+/g, ' ').trim();
+        if (links) p._links.push(links);
+        c.filter(k => k.x >= 180 && k.x < 250).forEach(k => String(k.s).split(/[;,\s]+/).filter(m => /@/.test(m)).forEach(m => { if (!p.emails.includes(m)) p.emails.push(m); }));
+      });
+    });
+    fertig();
+    return out;
+  }
+  /** Abgeschnittene 30-Zeichen-Namensfelder vergleichen: gemeinsamer Anfang bis auf die letzten 2 Zeichen */
+  function namensfeldGleich(a, b) {
+    const n = Math.min(a.length, b.length); if (n < 20) return false;
+    let i = 0; while (i < n && a[i] === b[i]) i++;
+    return i >= n - 2;
+  }
+  const PLATZHALTER_OBJEKT = /^(PFkt\.|Import OPOS-Liste)/;
+  function whgNr(s) { const m = String(s || '').match(/\d+/); return m ? String(+m[0]) : ''; }
+  /** Telefonliste ins Adressbuch übernehmen (Schlüssel AdrNr). Nicht mehr enthaltene Einträge werden markiert, nicht gelöscht. */
+  function importTelefonliste(data, liste, o = {}) {
+    const heute = o.heute || today(), stand = liste.stand || heute;
+    const st = { neu: 0, geaendert: 0, unveraendert: 0, entfernt: 0, objekteNeu: 0, mieterVerknuepft: 0, emailsNeu: 0, objektZugeordnet: 0 };
+    data.adressbuch = data.adressbuch || [];
+    const objByNr = {};
+    liste.objekte.forEach(lo => {
+      let ob = data.objekte.find(x => x.nr === lo.nr);
+      const bez = titleCase(lo.strasse).replace(/\bStr\.?(\s|$)/g, 'Str.$1');
+      if (!ob) { ob = { id: uid(), nr: lo.nr, bezeichnung: bez, strasse: bez, plzort: lo.plzort, eigentuemer: '' }; data.objekte.push(ob); st.objekteNeu++; }
+      else { if (!ob.strasse) ob.strasse = bez; if (!ob.plzort) ob.plzort = lo.plzort; }
+      objByNr[lo.nr] = ob;
+    });
+    const gesehen = new Set();
+    liste.personen.forEach(lp => {
+      const key = lp.adrNr || (lp.objektNr + '|' + lp.whg + '|' + lp.importName);
+      gesehen.add(key);
+      const eintrag = { key, adrNr: lp.adrNr, objektNr: lp.objektNr, objektId: (objByNr[lp.objektNr] || {}).id || '', pfkt: lp.pfkt, whg: lp.whg, lage: lp.lage, rolle: lp.rolle,
+        anrede: lp.anrede, name: lp.name, importName: lp.importName, strasse: lp.strasse, plzort: lp.plzort, emails: lp.emails.slice() };
+      const alt = data.adressbuch.find(a => a.key === key);
+      if (!alt) { data.adressbuch.push(Object.assign(eintrag, { stand, seit: stand, aktiv: true, aenderung: 'neu' })); st.neu++; return; }
+      const diff = ['emails', 'strasse', 'plzort', 'name', 'lage', 'rolle', 'whg'].filter(k => JSON.stringify(alt[k]) !== JSON.stringify(eintrag[k]));
+      Object.assign(alt, eintrag, { stand, aktiv: true, aenderung: diff.length ? 'geändert: ' + diff.join(', ') : '' });
+      if (diff.length) st.geaendert++; else st.unveraendert++;
+    });
+    data.adressbuch.forEach(a => { if (!gesehen.has(a.key) && a.aktiv !== false) { a.aktiv = false; a.aenderung = 'nicht mehr in Liste (' + fmtDatum(stand) + ')'; st.entfernt++; } });
+    data.meta.telefonlisteStand = stand;
+    Object.assign(st, adressbuchVerknuepfen(data));
+    return st;
+  }
+  /** Adressbuch-Eintrag zu einem Mieter: Name (30-Zeichen-Feld), bei mehreren Treffern Wohnungsnummer */
+  function adresseZuMieter(data, m) {
+    if (!m) return null;
+    const k = normName(m.importName || (m.nachname + ', ' + m.vorname));
+    if (!k) return null;
+    let kand = (data.adressbuch || []).filter(a => a.aktiv !== false && /mieter/i.test(a.rolle || 'mieter') && normName(a.importName) === k);
+    if (!kand.length && k.length >= 20) kand = (data.adressbuch || []).filter(a => a.aktiv !== false && namensfeldGleich(normName(a.importName), k));
+    if (m.adrNr) { const x = kand.find(a => a.adrNr === m.adrNr); if (x) return x; }
+    if (kand.length > 1 && m.whg) { const nrs = String(m.whg).split(',').map(whgNr); const x = kand.find(a => nrs.includes(whgNr(a.whg))); if (x) return x; }
+    return kand[0] || null;
+  }
+  function emailsZuMieter(data, m) {
+    if (m && m.email) return m.email;
+    const a = adresseZuMieter(data, m);
+    return a && a.emails.length ? a.emails.join('; ') : '';
+  }
+  /** Mieter mit Adressbuch abgleichen: E-Mail, Anschrift, Anrede und Objekt ergänzen (manuelle E-Mails bleiben) */
+  function adressbuchVerknuepfen(data) {
+    const st = { mieterVerknuepft: 0, emailsNeu: 0, objektZugeordnet: 0 };
+    data.mieter.forEach(m => {
+      const a = adresseZuMieter(data, m); if (!a) return;
+      st.mieterVerknuepft++;
+      m.adrNr = a.adrNr;
+      const mails = a.emails.join('; ');
+      if (mails && (!m.email || m.emailQuelle === 'telefonliste') && m.email !== mails) { m.email = mails; m.emailQuelle = 'telefonliste'; st.emailsNeu++; }
+      if (!m.anrede && a.anrede && m.anrede !== 'Firma') m.anrede = a.anrede;
+      const ob = data.objekte.find(o => o.id === a.objektId);
+      const aktObj = data.objekte.find(o => o.id === m.objektId);
+      if (ob && (!aktObj || PLATZHALTER_OBJEKT.test(aktObj.bezeichnung))) { m.objektId = ob.id; st.objektZugeordnet++; }
+      const wohntImObjekt = ob && normName(a.strasse).startsWith(normName(ob.strasse).slice(0, 8));
+      if (!m.anschrift && a.strasse && !wohntImObjekt) m.anschrift = a.strasse + '\n' + a.plzort;
+      if (!m.whg || /^Whg\. \d+$/.test(m.whg)) m.whg = a.lage ? a.lage.replace(/\s*-\s*$/, '') + ' (Whg. ' + whgNr(a.whg) + ')' : m.whg;
+    });
+    // leere Platzhalter-Objekte aufräumen
+    data.objekte = data.objekte.filter(o => !PLATZHALTER_OBJEKT.test(o.bezeichnung) || data.mieter.some(m => m.objektId === o.id) || data.ih.some(f => f.objektId === o.id));
     return st;
   }
 
@@ -890,7 +1029,7 @@
     offenSumme, kuendigungsCheck, verteileZahlung, kautionsabrechnung, verjaehrung, kautionAmpel, ratenplan,
     monateText, defaultEmail, wvDatum, createWV, completeWV, snoozeWV, setWVDatum, plusEinheit, WV_EINHEITEN, defaultUI, closeWV, offeneWV, addVerlauf, wvRegeln, applyAction, findFall,
     getPath, vorlageZuHTML, vorlageZuText,
-    parseCSV, guessMapping, typAusText, importOPOS, normName, nameAufteilen, parseMietzeit, parseSaldo, parseWV, erkenneFormat, titelMieter, parseJsonBlatt, parseSaldenBlatt, findeMieter, saldoAbgleich, importSalden, asciiDateiname, buildEML
+    parseCSV, guessMapping, typAusText, importOPOS, normName, nameAufteilen, parseMietzeit, parseSaldo, parseWV, erkenneFormat, titelMieter, parseJsonBlatt, parseSaldenBlatt, findeMieter, saldoAbgleich, importSalden, parseTelefonliste, importTelefonliste, adresseZuMieter, emailsZuMieter, adressbuchVerknuepfen, whgNr, asciiDateiname, buildEML
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = Core;
   else root.Core = Core;

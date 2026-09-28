@@ -17,7 +17,7 @@
       ih: { q: '', objekt: '', status: 'aktiv' },
       kaution: { q: '', status: 'aktiv' },
       stamm: { sub: 'mieter', q: '', objekt: '' },
-      kontakte: { q: '', typ: '' },
+      kontakte: { q: '', typ: '', sub: 'adressbuch', aq: '', aobj: '', afilter: '', mehr: 0 },
       einst: { vorlage: 'erinnerung' }
     }
   };
@@ -475,19 +475,99 @@
   const KTYP = { handwerker: 'Handwerker', anwalt: 'Anwalt', sonstig: 'Sonstig' };
   App.views.kontakte = {
     render() {
-      const f = App.f.kontakte; const q = f.q.toLowerCase();
-      const l = App.data.kontakte.filter(k => (!f.typ || k.typ === f.typ) && (!q || JSON.stringify(k).toLowerCase().includes(q))).sort((a, b) => a.firma.localeCompare(b.firma));
-      return '<section class="card"><div class="toolbar"><h2>Kontakte</h2><input type="search" id="kontaktQ" data-filter="kontakte.q" placeholder="Suchen (Firma, Gewerk …)" value="' + esc(f.q) + '">' +
-        '<select data-filter="kontakte.typ"><option value="">alle</option>' + Object.entries(KTYP).map(([v, lb]) => '<option value="' + v + '"' + (f.typ === v ? ' selected' : '') + '>' + lb + '</option>').join('') + '</select>' +
-        '<span class="sp"></span><button class="primary" data-act="kontaktEdit">+ Kontakt</button></div>' +
-        (l.length ? '<table class="tbl"><thead><tr><th>Firma</th><th>Typ</th><th>Gewerk</th><th>Ansprechpartner</th><th>Telefon</th><th>E-Mail</th><th>Notiz</th><th></th></tr></thead><tbody>' +
-          l.map(k => '<tr><td><b>' + esc(k.firma) + '</b></td><td>' + KTYP[k.typ] + '</td><td>' + (k.gewerk || []).map(g => H.chip(g)).join(' ') + '</td><td>' + esc(k.ansprechpartner || '') + '</td>' +
-            '<td class="nw">' + esc(k.tel || '') + '</td><td>' + (k.email ? '<a href="mailto:' + esc(k.email) + '">' + esc(k.email) + '</a>' : '') + '</td><td class="small">' + esc(k.notiz || '') + '</td>' +
-            '<td class="r nw"><button class="s" data-act="kontaktEdit" data-id="' + k.id + '">Bearbeiten</button><button class="s del" data-act="kontaktDel" data-id="' + k.id + '">×</button></td></tr>').join('') +
-          '</tbody></table>' : H.leer('Keine Kontakte. Legen Sie Handwerker mit Gewerk an – dann schlägt das Tool passende Firmen für Anfragen vor.')) + '</section>';
+      const f = App.f.kontakte;
+      const sub = '<div class="subtabs"><button class="' + (f.sub === 'adressbuch' ? 'on' : '') + '" data-act="kontakteSub" data-s="adressbuch">Mieter & Eigentümer (' + (App.data.adressbuch || []).filter(a => a.aktiv !== false).length + ')</button>' +
+        '<button class="' + (f.sub === 'firmen' ? 'on' : '') + '" data-act="kontakteSub" data-s="firmen">Handwerker, Anwälte & Sonstige (' + App.data.kontakte.length + ')</button></div>';
+      return sub + (f.sub === 'adressbuch' ? adressbuchHTML() : firmenHTML());
     }
   };
+  function firmenHTML() {
+    const f = App.f.kontakte; const q = f.q.toLowerCase();
+    const l = App.data.kontakte.filter(k => (!f.typ || k.typ === f.typ) && (!q || JSON.stringify(k).toLowerCase().includes(q))).sort((a, b) => a.firma.localeCompare(b.firma));
+    return '<section class="card"><div class="toolbar"><h2>Kontakte</h2><input type="search" id="kontaktQ" data-filter="kontakte.q" placeholder="Suchen (Firma, Gewerk …)" value="' + esc(f.q) + '">' +
+      '<select data-filter="kontakte.typ"><option value="">alle</option>' + Object.entries(KTYP).map(([v, lb]) => '<option value="' + v + '"' + (f.typ === v ? ' selected' : '') + '>' + lb + '</option>').join('') + '</select>' +
+      '<span class="sp"></span><button class="primary" data-act="kontaktEdit">+ Kontakt</button></div>' +
+      (l.length ? '<table class="tbl"><thead><tr><th>Firma</th><th>Typ</th><th>Gewerk</th><th>Ansprechpartner</th><th>Telefon</th><th>E-Mail</th><th>Notiz</th><th></th></tr></thead><tbody>' +
+        l.map(k => '<tr><td><b>' + esc(k.firma) + '</b></td><td>' + KTYP[k.typ] + '</td><td>' + (k.gewerk || []).map(g => H.chip(g)).join(' ') + '</td><td>' + esc(k.ansprechpartner || '') + '</td>' +
+          '<td class="nw">' + esc(k.tel || '') + '</td><td>' + (k.email ? '<a href="mailto:' + esc(k.email) + '">' + esc(k.email) + '</a>' : '') + '</td><td class="small">' + esc(k.notiz || '') + '</td>' +
+          '<td class="r nw"><button class="s" data-act="kontaktEdit" data-id="' + k.id + '">Bearbeiten</button><button class="s del" data-act="kontaktDel" data-id="' + k.id + '">×</button></td></tr>').join('') +
+        '</tbody></table>' : H.leer('Keine Kontakte. Legen Sie Handwerker mit Gewerk an – dann schlägt das Tool passende Firmen für Anfragen vor.')) + '</section>';
+  }
+  const ABFILTER = [['', 'alle aktuellen'], ['mieter', 'nur Mieter'], ['eigentuemer', 'nur Eigentümer'], ['ohneMail', 'ohne E-Mail'], ['opos', 'mit offenem OPOS-Fall'], ['geaendert', 'neu/geändert beim letzten Einlesen'], ['weg', 'nicht mehr in der Liste']];
+  function adressbuchListe() {
+    const f = App.f.kontakte, q = f.aq.toLowerCase().trim(), d = App.data;
+    const oposVon = {}; d.opos.forEach(x => { if (x.stufe !== 'erledigt') { const m = H.mieter(x.mieterId); if (m && m.adrNr) oposVon[m.adrNr] = x; } });
+    return { oposVon, liste: (d.adressbuch || []).filter(a => {
+      if (f.afilter === 'weg') { if (a.aktiv !== false) return false; } else if (a.aktiv === false) return false;
+      if (f.aobj && a.objektId !== f.aobj) return false;
+      if (f.afilter === 'mieter' && !/mieter/i.test(a.rolle)) return false;
+      if (f.afilter === 'eigentuemer' && !/eigent/i.test(a.rolle)) return false;
+      if (f.afilter === 'ohneMail' && a.emails.length) return false;
+      if (f.afilter === 'opos' && !oposVon[a.adrNr]) return false;
+      if (f.afilter === 'geaendert' && !a.aenderung) return false;
+      return !q || [a.name, a.importName, a.emails.join(' '), a.strasse, a.plzort, a.lage, a.adrNr, (H.objekt(a.objektId) || {}).bezeichnung].join(' ').toLowerCase().includes(q);
+    }).sort((a, b) => (a.objektNr || '').localeCompare(b.objektNr || '') || (a.whg || '').localeCompare(b.whg || '')) };
+  }
+  function adressbuchHTML() {
+    const f = App.f.kontakte, d = App.data; const ab = d.adressbuch || [];
+    const { oposVon, liste } = adressbuchListe();
+    const objOpt = Array.from(new Set(ab.map(a => a.objektId).filter(Boolean))).map(id => H.objekt(id)).filter(Boolean).sort((a, b) => (a.nr || '').localeCompare(b.nr || ''));
+    const max = 200 + (f.mehr || 0);
+    const kopf = '<div class="toolbar"><h2>Adressbuch</h2><span class="muted">' + (d.meta.telefonlisteStand ? 'Telefonliste vom ' + fmtDatum(d.meta.telefonlisteStand) : 'noch keine Telefonliste eingelesen') + '</span>' +
+      '<span class="sp"></span><button data-act="adressbuchExcel"' + (ab.length ? '' : ' disabled') + '>Excel</button><button class="primary" data-act="telefonlisteImport">⇪ Telefonliste (PDF) einlesen</button></div>';
+    if (!ab.length) return '<section class="card">' + kopf + H.leer('Hier landen alle Mieter und Eigentümer mit Anschrift und E-Mail aus der Telefonliste der Verwaltungssoftware (PDF).<br>' +
+      'Monatlich neu einlesen – Änderungen werden erkannt, OPOS-Mieter automatisch verknüpft (E-Mail für ✉ Mahnen).') + '</section>';
+    const alt = d.meta.telefonlisteStand && C.diffDays(d.meta.telefonlisteStand, C.today()) > 35;
+    return '<section class="card">' + kopf + (alt ? '<div class="banner warn">Die Telefonliste ist älter als einen Monat – bitte aktuelle PDF einlesen.</div>' : '') +
+      '<div class="toolbar"><input type="search" id="abQ" data-filter="kontakte.aq" placeholder="Name, E-Mail, Adresse, AdrNr …" value="' + esc(f.aq) + '">' +
+      '<select data-filter="kontakte.aobj"><option value="">alle Objekte</option>' + objOpt.map(o => '<option value="' + o.id + '"' + (f.aobj === o.id ? ' selected' : '') + '>' + esc((o.nr ? o.nr + ' · ' : '') + o.bezeichnung) + '</option>').join('') + '</select>' +
+      '<select data-filter="kontakte.afilter">' + ABFILTER.map(([v, l]) => '<option value="' + v + '"' + (f.afilter === v ? ' selected' : '') + '>' + l + '</option>').join('') + '</select>' +
+      '<span class="muted">' + liste.length + ' Einträge</span></div>' +
+      (liste.length ? '<table class="tbl"><thead><tr><th>Objekt</th><th>Whg / Lage</th><th>Name</th><th>Anschrift</th><th>E-Mail</th><th>AdrNr</th><th></th></tr></thead><tbody>' +
+        liste.slice(0, max).map(a => {
+          const o = H.objekt(a.objektId) || {}; const fall = oposVon[a.adrNr];
+          return '<tr class="' + (a.aktiv === false ? 'done' : '') + '"><td class="small">' + esc(o.nr || a.objektNr) + '<br>' + esc(o.bezeichnung || '') + '</td>' +
+            '<td class="small">' + esc(C.whgNr(a.whg)) + (a.lage ? ' · ' + esc(a.lage) : '') + (/eigent/i.test(a.rolle) ? '<br>' + H.chip('Eigentümer', 'blau') : '') + '</td>' +
+            '<td><b>' + esc(a.name || a.importName) + '</b>' + (a.anrede ? ' <small class="muted">' + esc(a.anrede) + '</small>' : '') + '<br><small class="muted">' + esc(a.importName) + '</small></td>' +
+            '<td class="small">' + esc(a.strasse) + '<br>' + esc(a.plzort) + '</td>' +
+            '<td class="small">' + (a.emails.length ? a.emails.map(m => '<a href="mailto:' + esc(m) + '">' + esc(m) + '</a>').join('<br>') : '<span class="rot-t">keine</span>') + '</td>' +
+            '<td class="small">' + esc(a.adrNr) + '</td><td class="r nw">' + (a.aenderung ? H.chip(a.aenderung.slice(0, 40), a.aktiv === false ? 'rot' : 'gelb') + ' ' : '') +
+            (fall ? '<button class="s" data-act="openFall" data-b="opos" data-id="' + fall.id + '">OPOS</button><button class="s" data-act="oposMahnenMail" data-id="' + fall.id + '">✉ Mahnen</button>' : '') + '</td></tr>';
+        }).join('') + '</tbody></table>' + (liste.length > max ? '<p class="r"><button data-act="adressbuchMehr">Weitere ' + Math.min(200, liste.length - max) + ' anzeigen (' + (liste.length - max) + ' übrig)</button></p>' : '')
+        : H.leer('Keine Einträge für diesen Filter.')) + '</section>';
+  }
   Object.assign(App.act, {
+    kontakteSub(ds) { App.f.kontakte.sub = ds.s; App.render(); },
+    adressbuchMehr() { App.f.kontakte.mehr = (App.f.kontakte.mehr || 0) + 200; App.render(); },
+    async telefonlisteImport() {
+      const v = await formModal('Telefonliste einlesen', [{ k: 'datei', l: 'PDF aus der Verwaltungssoftware („Telefonliste gültig ab …“)', t: 'file', accept: '.pdf,application/pdf', full: true }], {},
+        { ok: 'Einlesen', intro: '<p class="muted">Liest alle Mieter und Eigentümer mit Objekt, Wohnung, Anschrift und E-Mail. Monatlich neu einlesen – bekannte Einträge (AdrNr) werden aktualisiert, ' +
+          'nicht mehr enthaltene markiert. OPOS-Mieter werden über Name und Wohnung verknüpft und bekommen ihre E-Mail für ✉ Mahnen. Selbst eingetragene E-Mails bleiben erhalten.</p>' });
+      if (!v || !v.datei[0]) return;
+      toast('PDF wird gelesen …');
+      let liste;
+      try { liste = C.parseTelefonliste(await D.lesePdfText(v.datei[0])); }
+      catch (e) { return toast('PDF konnte nicht gelesen werden: ' + e.message + ' (für das Einlesen wird einmal Internet benötigt)', 'err', 9000); }
+      if (!liste.personen.length) return toast('In der PDF wurden keine Einträge gefunden. Ist es die Telefonliste mit Textebene (nicht eingescannt)?', 'err', 9000);
+      if (App.data.meta.telefonlisteStand && liste.stand && liste.stand < App.data.meta.telefonlisteStand &&
+        !await confirmDlg('Diese Liste (' + fmtDatum(liste.stand) + ') ist älter als die bereits eingelesene (' + fmtDatum(App.data.meta.telefonlisteStand) + '). Trotzdem einlesen?')) return;
+      const st = C.importTelefonliste(App.data, liste);
+      App.tab = 'kontakte'; App.f.kontakte.sub = 'adressbuch'; App.commit();
+      const oposAktiv = App.data.opos.filter(f => f.stufe !== 'erledigt');
+      const ohne = oposAktiv.map(f => H.mieter(f.mieterId)).filter(m => m && !C.emailsZuMieter(App.data, m));
+      const ohneEhem = ohne.filter(m => m.mietende && m.mietende < C.today()).length, ohneMail = ohne.length - ohneEhem;
+      modal({ title: 'Telefonliste eingelesen (Stand ' + fmtDatum(liste.stand) + ')', body: '<ul>' +
+        '<li><b>' + liste.personen.length + '</b> Personen in ' + liste.objekte.length + ' Objekten, ' + liste.personen.filter(x => x.emails.length).length + ' mit E-Mail</li>' +
+        '<li>' + st.neu + ' neu, ' + st.geaendert + ' geändert, ' + st.unveraendert + ' unverändert' + (st.entfernt ? ', <b>' + st.entfernt + '</b> nicht mehr in der Liste' : '') + '</li>' +
+        (st.objekteNeu ? '<li>' + st.objekteNeu + ' Objekte neu angelegt</li>' : '') +
+        '<li><b>' + st.mieterVerknuepft + '</b> OPOS-Mieter verknüpft, ' + st.emailsNeu + ' E-Mail-Adressen übernommen' + (st.objektZugeordnet ? ', ' + st.objektZugeordnet + ' dem richtigen Objekt zugeordnet' : '') + '</li>' +
+        '<li>' + (ohneMail ? '<span class="rot-t">' + ohneMail + ' offene OPOS-Fälle aktueller Mieter ohne E-Mail</span> – beim ✉ Mahnen eintragen' : 'Alle offenen OPOS-Fälle aktueller Mieter haben eine E-Mail-Adresse.') +
+          (ohneEhem ? '<br><small class="muted">' + ohneEhem + ' weitere Fälle ehemaliger Mieter ohne E-Mail (stehen nicht mehr in der Telefonliste)</small>' : '') + '</li></ul>' });
+    },
+    async adressbuchExcel() {
+      const zeilen = (App.data.adressbuch || []).map(a => { const o = H.objekt(a.objektId) || {}; return [a.objektNr, o.bezeichnung || '', C.whgNr(a.whg), a.lage, a.rolle, a.anrede, a.name, a.importName, a.strasse, a.plzort, a.emails.join('; '), a.adrNr, a.aktiv === false ? 'nicht mehr in Liste' : 'aktuell', fmtDatum(a.stand)]; });
+      await D.excel('Adressbuch ' + C.today(), [{ name: 'Adressbuch', kopf: ['Objekt-Nr', 'Objekt', 'Whg', 'Lage', 'Rolle', 'Anrede', 'Name', 'Name (Liste)', 'Straße', 'PLZ Ort', 'E-Mail', 'AdrNr', 'Status', 'Stand'], zeilen }]);
+    },
     async kontaktEdit(ds) {
       const k = ds.id ? H.kontakt(ds.id) : null;
       const v = await formModal(k ? 'Kontakt bearbeiten' : 'Neuer Kontakt', [
@@ -715,6 +795,7 @@
     });
     d.objekte.forEach(o => { if ([o.bezeichnung, o.strasse, o.eigentuemer].some(hit)) r.push({ t: 'Objekt', l: o.bezeichnung, act: { objekt: o.id } }); });
     d.ih.forEach(f => { if ([f.titel, f.beschreibung].some(hit)) r.push({ t: 'Instandhaltung', l: H.fallLabel('ih', f), act: { b: 'ih', id: f.id } }); });
+    (d.adressbuch || []).forEach(a => { if (a.aktiv !== false && r.length < 14 && [a.name, a.importName, a.emails.join(' ')].some(hit) && !d.mieter.some(m => m.adrNr === a.adrNr && [C.mieterName(m)].some(hit))) r.push({ t: 'Adressbuch', l: (a.name || a.importName) + ' – ' + ((H.objekt(a.objektId) || {}).bezeichnung || a.objektNr), act: { adresse: a.adrNr || a.importName } }); });
     d.kontakte.forEach(k => { if ([k.firma, k.ansprechpartner, (k.gewerk || []).join(' ')].some(hit)) r.push({ t: 'Kontakt', l: k.firma, act: { kontakt: k.id } }); });
     d.opos.forEach(f => { if ((f.posten || []).some(p => hit(p.bez)) || hit(f.notiz)) r.push({ t: 'OPOS', l: H.fallLabel('opos', f), act: { b: 'opos', id: f.id } }); });
     return r.slice(0, 14);
@@ -724,7 +805,8 @@
     if (a.b) return App.act.openFall(a);
     if (a.mieter) { App.tab = 'stamm'; App.f.stamm.sub = 'mieter'; App.detail = null; App.render(); return App.act.mieterEdit({ id: a.mieter }); }
     if (a.objekt) { App.tab = 'stamm'; App.f.stamm.sub = 'mieter'; App.f.stamm.objekt = a.objekt; App.detail = null; return App.render(); }
-    if (a.kontakt) { App.tab = 'kontakte'; App.detail = null; App.render(); return App.act.kontaktEdit({ id: a.kontakt }); }
+    if (a.adresse) { App.tab = 'kontakte'; App.f.kontakte.sub = 'adressbuch'; App.f.kontakte.aq = a.adresse; App.f.kontakte.afilter = ''; App.f.kontakte.aobj = ''; App.detail = null; return App.render(); }
+    if (a.kontakt) { App.tab = 'kontakte'; App.f.kontakte.sub = 'firmen'; App.detail = null; App.render(); return App.act.kontaktEdit({ id: a.kontakt }); }
   }
   let _treffer = [];
   function sucheRender() {
@@ -777,7 +859,7 @@
     document.addEventListener('change', e => {
       const el = e.target;
       if (el.dataset.change && App.change[el.dataset.change]) return App.change[el.dataset.change](el, e);
-      if (el.dataset.filter && el.tagName === 'SELECT') { setFilter(el.dataset.filter, el.value); App.render(); }
+      if (el.dataset.filter && el.tagName === 'SELECT') { setFilter(el.dataset.filter, el.value); App.f.kontakte.mehr = 0; App.render(); }
     });
     document.addEventListener('input', e => {
       const el = e.target;

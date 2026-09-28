@@ -185,6 +185,35 @@ C.applyAction(d, 'opos', 'o1', 'emailMahnung', { heute: '2026-09-28', abmahnung:
 eq([d.opos[0].stufe, d.opos[0].abmahnungAm, C.offeneWV(d, 'opos', 'o1').map(w => w.datum)], ['mahnung1', '2026-09-28', ['2026-10-08']], 'E-Mail-Mahnung: Stufe, Abmahnung, WV Frist 7 + 3');
 truthy(/Sauren/.test(C.normalize({}).settings.email.signatur), 'Signatur-Standard');
 
+section('Telefonliste (PDF) → Adressbuch');
+const T = (x, y, s) => ({ x, y, s });
+const seite1 = [T(38, 830, 'Telefonliste gültig ab: 28.09.2026'), T(42, 811, 'Objekt Nr.'), T(89, 811, '120500'), T(123, 811, 'BEISPIELWEG 5'), T(70, 797, 'DE'), T(93, 797, '52074'), T(123, 797, 'Aachen'),
+  T(39, 780, 'Herr'), T(259, 780, 'PFkt:'), T(292, 780, '007'), T(332, 780, 'Mieter'),
+  T(39, 767, 'Paul Probe'), T(259, 767, 'Whg.:'), T(292, 767, '0003'), T(332, 767, '1. OG rechts'),
+  T(259, 755, 'AdrNr'), T(293, 755, '130001'), T(332, 755, 'PROBE, PAUL'),
+  T(39, 729, 'Beispielweg 5'), T(39, 715, '52074'), T(80, 715, 'Aachen'), T(196, 703, 'paul@example.org'), T(196, 690, 'p.probe@example.org'),
+  T(259, 670, 'PFkt:'), T(292, 670, '007'), T(332, 670, 'Mieter'),
+  T(39, 657, 'Anna Muster'), T(259, 657, 'Whg.:'), T(292, 657, '0004'), T(332, 657, 'DG'),
+  T(39, 645, 'Ben Muster'), T(259, 645, 'AdrNr'), T(293, 645, '130002'), T(332, 645, 'MUSTER, ANNA BEN'),
+  T(77, 16, 'Druck'), T(132, 16, '28.09.2026'), T(515, 16, '1')];
+const seite2 = [T(38, 830, 'Telefonliste gültig ab: 28.09.2026'), T(42, 811, 'Objekt Nr.'), T(89, 811, '120500'), T(123, 811, 'BEISPIELWEG 5'), T(70, 797, 'DE'), T(93, 797, '52074'), T(123, 797, 'Aachen'),
+  T(39, 782, 'Neuer Weg 1'), T(39, 768, 'DE 50129 Bergheim'), T(196, 755, 'muster@example.org')];
+const tl = C.parseTelefonliste([seite1, seite2]);
+eq([tl.stand, tl.objekte.length, tl.objekte[0].plzort, tl.personen.length], ['2026-09-28', 1, '52074 Aachen', 2], 'Telefonliste: Stand, Objekt (Seitenkopf wiederholt), Personen');
+eq(tl.personen[0], { objektNr: '120500', pfkt: '007', whg: '0003', adrNr: '130001', rolle: 'Mieter', lage: '1. OG rechts', importName: 'PROBE, PAUL', anrede: 'Herr', name: 'Paul Probe', strasse: 'Beispielweg 5', plzort: '52074 Aachen', emails: ['paul@example.org', 'p.probe@example.org'] }, 'Person mit zwei E-Mails, PLZ/Ort getrennt');
+eq([tl.personen[1].name, tl.personen[1].strasse, tl.personen[1].plzort, tl.personen[1].emails], ['Anna Muster und Ben Muster', 'Neuer Weg 1', '50129 Bergheim', ['muster@example.org']], 'Block über Seitenumbruch, zwei Namen, Länderkürzel');
+d = C.emptyData(); let sT;
+d.mieter.push({ id: 'mm', importName: 'PROBE, PAUL', nachname: 'Probe', vorname: 'Paul', whg: 'Whg. 3', objektId: 'pl', email: '' }); d.objekte.push({ id: 'pl', bezeichnung: 'Import OPOS-Liste' });
+d.mieter.push({ id: 'm2', importName: 'MUSTER, ANNA BEN', nachname: 'Muster', vorname: 'Anna', objektId: 'pl', email: 'eigene@example.org', emailQuelle: 'manuell' });
+sT = C.importTelefonliste(d, tl, { heute: '2026-09-28' });
+eq([sT.neu, sT.mieterVerknuepft, sT.emailsNeu, sT.objektZugeordnet], [2, 2, 1, 2], 'Import: verknüpft, E-Mail übernommen, Objekt zugeordnet');
+eq([d.mieter[0].email, d.mieter[0].adrNr, d.mieter[0].anrede, d.mieter[1].email], ['paul@example.org; p.probe@example.org', '130001', 'Herr', 'eigene@example.org'], 'E-Mails aus Liste, manuelle E-Mail bleibt');
+eq(d.objekte.map(o => o.bezeichnung), ['Beispielweg 5'], 'Platzhalter-Objekt aufgeräumt, echtes Objekt angelegt');
+tl.personen[0].emails = ['neu@example.org']; tl.personen.pop();
+sT = C.importTelefonliste(d, tl, { heute: '2026-10-28' });
+eq([sT.geaendert, sT.entfernt, d.mieter[0].email], [1, 1, 'neu@example.org'], 'Folgemonat: Änderung erkannt, fehlender Eintrag markiert, E-Mail aktualisiert');
+eq(C.emailsZuMieter(d, { importName: 'PROBE, PAUL' }), 'neu@example.org', 'E-Mail-Suche über Adressbuch');
+
 section('Vorlagen');
 const html = C.vorlageZuHTML('Hallo {{m.name}},\n\n{{postenTabelle}}\n\nSumme **{{s}}** <x>\nZeile {{fehlt}}', { m: { name: 'A & B' }, postenTabelle: '<table>\n<tr><td>1</td></tr></table>', s: '1,00 €' });
 eq(html, '<p>Hallo A &amp; B,</p>\n<table><tr><td>1</td></tr></table>\n<p>Summe <b>1,00 €</b> &lt;x&gt;<br>Zeile <mark>{{fehlt}}</mark></p>', 'vorlageZuHTML');

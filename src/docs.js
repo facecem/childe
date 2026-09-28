@@ -10,7 +10,9 @@
   const CDN = {
     html2pdf: 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js',
     xlsx: 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
-    html2canvas: 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js'
+    html2canvas: 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js',
+    pdfjs: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
+    pdfjsWorker: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
   };
   const _libs = {};
   function loadLib(name, globalName) {
@@ -620,11 +622,28 @@ Mit freundlichen Grüßen
     if (text.includes('\ufffd')) text = new TextDecoder('windows-1252').decode(buf);
     return [{ name: file.name, rows: C.parseCSV(text) }];
   }
+  /** Textstücke aller PDF-Seiten → [[{ x, y, s }]] (pdf.js, lädt aus dem CDN) */
+  async function lesePdfText(file, fortschritt) {
+    const lib = await loadLib('pdfjs', 'pdfjsLib');
+    if (!lib.GlobalWorkerOptions.workerSrc) {
+      // Worker als Blob laden – direkt vom CDN verbietet der Browser bei file://
+      try { lib.GlobalWorkerOptions.workerSrc = URL.createObjectURL(await (await fetch(CDN.pdfjsWorker)).blob()); }
+      catch (e) { lib.GlobalWorkerOptions.workerSrc = CDN.pdfjsWorker; }
+    }
+    const doc = await lib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+    const seiten = [];
+    for (let i = 1; i <= doc.numPages; i++) {
+      const tc = await (await doc.getPage(i)).getTextContent();
+      seiten.push(tc.items.map(it => ({ x: it.transform[4], y: it.transform[5], s: it.str })));
+      if (fortschritt) fortschritt(i, doc.numPages);
+    }
+    return seiten;
+  }
   async function png(el, name) {
     const h2c = await loadLib('html2canvas', 'html2canvas');
     const canvas = await h2c(el, { scale: 2, backgroundColor: '#ffffff' });
     canvas.toBlob(b => download(b, C.asciiDateiname(name) + '.png'));
   }
 
-  root.Docs = { STANDARD, PLATZHALTER, BRIEF_CSS, vorlage, kontext, erzeuge, briefHTML, standalone, download, drucken, word, pdf, pdfBlob, emailEntwurf, emailOhneAnhang, excel, leseArbeitsmappe, png, loadLib, tabelle };
+  root.Docs = { STANDARD, PLATZHALTER, BRIEF_CSS, vorlage, kontext, erzeuge, briefHTML, standalone, download, drucken, word, pdf, pdfBlob, emailEntwurf, emailOhneAnhang, excel, leseArbeitsmappe, lesePdfText, png, loadLib, tabelle };
 })(window);
