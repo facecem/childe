@@ -218,7 +218,7 @@
     wvSnooze(ds) { const w = C.snoozeWV(App.data, ds.id, +ds.t, C.today(), UI().wvEinheit); App.commit(); toast('WV verschoben auf ' + fmtDatum(w.datum) + '.'); },
     async wvSnoozeFrei(ds) {
       const w = App.data.wv.find(x => x.id === ds.id); if (!w) return;
-      const letzte = App.f.snooze || { anzahl: 5, einheit: UI().wvEinheit };
+      const letzte = App.f.snooze || { anzahl: 2, einheit: UI().wvEinheit };
       const basis = C.maxISO(w.datum, C.today());
       const chips = [1, 2, 3, 4, 5, 7, 10, 14, 21, 30].map(n => '<button type="button" class="s" data-n="' + n + '">+' + n + '</button>').join('');
       const v = await formModal('WV verschieben', [
@@ -597,7 +597,7 @@
   /* ---------- Einstellungen ---------- */
   const FRIST_LABEL = {
     erinnerung: 'Zahlungserinnerung: Zahlungsfrist (Tage)', mahnung1: '1. Mahnung: Zahlungsfrist (Tage)', mahnungLetzte: 'Letzte Mahnung: Zahlungsfrist (Tage)',
-    emailMahnung: 'E-Mail-Mahnung (✉ Mahnen): Zahlungsfrist (Tage)', abmahnung: 'Abmahnung: Prüffrist (Tage)', kuendigung: 'Kündigung: Räumungs-/Prüffrist (Tage)', anwalt: 'Anwalt: Sachstand nach (Tagen)',
+    emailMahnung: 'E-Mail-Mahnung (✉ Mahnen): Zahlungsfrist (Tage)', kautionPruefen: 'Kaution: Schäden/Kosten ermitteln nach Übergabe (Tage)', abmahnung: 'Abmahnung: Prüffrist (Tage)', kuendigung: 'Kündigung: Räumungs-/Prüffrist (Tage)', anwalt: 'Anwalt: Sachstand nach (Tagen)',
     angebot: 'IH: Angebot eingegangen? nach (Tagen)', ausfuehrung: 'IH: Ausführung prüfen ohne Termin (Tage)', rechnung: 'IH: Rechnung prüfen nach Erledigung (Tage)',
     ihMieter: 'IH: Frist Anfrage an Handwerker (Tage)', weiterbelastung: 'IH: Zahlungsfrist Weiterbelastung (Tage)',
     kautionAbrechnungMonate: 'Kaution: Abrechnung nach Übergabe (Monate)', auszahlung: 'Kaution: Auszahlung prüfen nach (Tagen)', bankverbindung: 'Kaution: Frist Bankverbindung (Tage)'
@@ -899,6 +899,7 @@
       }
     });
     App.render();
+    if (App.data.meta.taktVorgezogen) { toast('Kürzerer WV-Takt aktiv: ' + App.data.meta.taktVorgezogen + ' offene automatische WV wurden vorgezogen. Abstände unter Einstellungen → Fristen & Regeln.', 'ok', 9000); App.data.meta.taktVorgezogen = 0; App.save(); }
     const lb = App.data.meta.lastBackup;
     if ((App.data.opos.length + App.data.ih.length + App.data.kaution.length) && (!lb || C.diffDays(lb.slice(0, 10), C.today()) >= 7))
       setTimeout(() => toast('Erinnerung: Das letzte Backup ist älter als eine Woche. Einstellungen → Backup exportieren.', 'warn', 8000), 800);

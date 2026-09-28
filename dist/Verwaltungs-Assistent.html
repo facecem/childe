@@ -312,11 +312,11 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
       bank: 'Sparkasse Aachen', iban: 'DE00 0000 0000 0000 0000 00', bic: 'AACSDE33XXX',
       logo: '', ibanJeEigentuemer: false,
       fristen: {
-        erinnerung: 10, mahnung1: 10, mahnungLetzte: 7, abmahnung: 14, kuendigung: 14, anwalt: 14,
-        angebot: 5, ausfuehrung: 10, rechnung: 14, ihMieter: 14, weiterbelastung: 14,
-        kautionAbrechnungMonate: 3, auszahlung: 14, bankverbindung: 14, emailMahnung: 7
+        erinnerung: 7, mahnung1: 7, mahnungLetzte: 5, abmahnung: 7, kuendigung: 14, anwalt: 7,
+        angebot: 3, ausfuehrung: 5, rechnung: 7, ihMieter: 7, weiterbelastung: 14,
+        kautionAbrechnungMonate: 2, kautionPruefen: 14, auszahlung: 7, bankverbindung: 7, emailMahnung: 5
       },
-      puffer: 3, mahngebuehr: 0, feiertageNRW: true, ratenVerzugTage: 14,
+      puffer: 1, mahngebuehr: 0, feiertageNRW: true, ratenVerzugTage: 14,
       email: defaultEmail(),
       ui: defaultUI()
     };
@@ -343,7 +343,7 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
   /** Anpassbare Oberfläche (Einstellungen → Anpassen) */
   function defaultUI() {
     return {
-      wvButtons: [1, 2, 3, 4], wvEinheit: 'tage', neuWvTage: 7,
+      wvButtons: [1, 2, 3, 4], wvEinheit: 'tage', neuWvTage: 2,
       wvAufgaben: ['Zahlungseingang prüfen', 'Rückruf Mieter', 'Rückmeldung Handwerker?', 'Mit Chef besprechen', 'Unterlagen angefordert – eingegangen?', 'Anwalt: Sachstand'],
       meinSB: 'Cem', ohneSbZeigen: true,
       startTab: 'dashboard', dashZeit: 'faellig', tabs: ['dashboard', 'opos', 'ih', 'kaution', 'stamm', 'kontakte'],
@@ -366,7 +366,7 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
     return {
       version: DATA_VERSION, settings: defaultSettings(), vorlagen: {},
       objekte: [], mieter: [], kontakte: [], adressbuch: [], wv: [], verlauf: [], opos: [], ih: [], kaution: [],
-      meta: { lastBackup: null, erstellt: today() }
+      meta: { lastBackup: null, erstellt: today(), takt: 2 }
     };
   }
   const ARRAYS = ['objekte', 'mieter', 'kontakte', 'adressbuch', 'wv', 'verlauf', 'opos', 'ih', 'kaution'];
@@ -378,14 +378,45 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
     out.settings = Object.assign(defaultSettings(), d.settings || {});
     out.settings.fristen = Object.assign(defaultSettings().fristen, (d.settings && d.settings.fristen) || {});
     out.settings.ui = Object.assign(defaultUI(), (d.settings && d.settings.ui) || {});
+    if (!(out.meta && out.meta.takt >= 2) && (d.settings || ARRAYS.some(k => (d[k] || []).length))) taktUmstellen(out);
     out.settings.email = Object.assign(defaultEmail(), (d.settings && d.settings.email) || {});
     ARRAYS.forEach(k => { if (!Array.isArray(out[k])) out[k] = []; });
     out.vorlagen = d.vorlagen && typeof d.vorlagen === 'object' ? d.vorlagen : {};
     out.meta = Object.assign({ lastBackup: null, erstellt: today() }, d.meta || {});
+    if (!(d.meta && d.meta.takt)) out.meta.takt = 1;
     out.opos.forEach(f => { f.posten = f.posten || []; f.raten = f.raten || []; });
     out.ih.forEach(f => { f.angebote = f.angebote || []; f.fotos = f.fotos || []; f.anfragen = f.anfragen || []; });
     out.kaution.forEach(f => { f.einbehalte = f.einbehalte || []; });
     return out;
+  }
+
+  /* ---------- WV-Takt 2: kürzere Abstände (einmalige Umstellung bestehender Daten) ---------- */
+  const TAKT1 = { erinnerung: 10, mahnung1: 10, mahnungLetzte: 7, abmahnung: 14, anwalt: 14, angebot: 5, ausfuehrung: 10, rechnung: 14, ihMieter: 14, kautionAbrechnungMonate: 3, auszahlung: 14, bankverbindung: 14, emailMahnung: 7 };
+  function taktUmstellen(data, heute = today()) {
+    const s = data.settings, neu = defaultSettings();
+    Object.keys(TAKT1).forEach(k => { if (Number(s.fristen[k]) === TAKT1[k]) s.fristen[k] = neu.fristen[k]; });
+    if (Number(s.puffer) === 3) s.puffer = neu.puffer;
+    if (Number(s.ui.neuWvTage) === 7) s.ui.neuWvTage = 2;
+    const f = s.fristen, P = Number(s.puffer) || 0; let n = 0;
+    (data.wv || []).forEach(w => {
+      if (w.status !== 'offen' || w.erstelltDurch !== 'auto') return;
+      const e = w.erstelltAm || heute; let ziel = null;
+      const frist = (String(w.aufgabe).match(/Frist (\d{2}\.\d{2}\.\d{4})/) || [])[1];
+      if (/^opos:(erinnerung|mahnung1|mahnungLetzte|abmahnung|emailMahnung)$/.test(w.regel) && frist) ziel = addDays(parseDatum(frist), P);
+      else if (w.regel === 'opos:kuendigung' && /Original/.test(w.aufgabe)) ziel = addDays(e, 1);
+      else if (w.regel === 'opos:anwalt') ziel = addDays(e, Number(f.anwalt) || 7);
+      else if (w.regel === 'ih:gemeldet') ziel = addWerktage(e, 1);
+      else if (w.regel === 'ih:angefragt') ziel = addDays(e, Number(f.angebot) || 3);
+      else if (w.regel === 'ih:beauftragt' && !/Termin/.test(w.aufgabe)) ziel = addDays(e, Number(f.ausfuehrung) || 5);
+      else if (w.regel === 'ih:erledigt') ziel = addDays(e, Number(f.rechnung) || 7);
+      else if (w.regel === 'kaution:abrechnung') ziel = addDays(e, Number(f.auszahlung) || 7);
+      else if (w.regel === 'kaution:uebergabe') ziel = addMonths(w.datum, -1);
+      if (!ziel) return;
+      const d = naechsterWerktag(maxISO(ziel, heute), s.feiertageNRW !== false);
+      if (d < w.datum) { w.datum = d; n++; }
+    });
+    data.meta = Object.assign(data.meta || {}, { takt: 2, taktVorgezogen: n });
+    return n;
   }
 
   /* ---------- Migration Prototyp (opos_assistent_v1) ---------- */
@@ -615,21 +646,21 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
     const s = data.settings, f = s.fristen, P = Number(s.puffer) || 0, h = ctx.heute || today(), nrw = s.feiertageNRW !== false;
     switch (bereich + ':' + aktion) {
       case 'opos:erinnerung': case 'opos:mahnung1': case 'opos:mahnungLetzte': case 'opos:abmahnung': {
-        const frist = ctx.frist || addDays(h, Number(f[aktion]) || 10);
+        const frist = ctx.frist || naechsterWerktag(addDays(h, Number(f[aktion]) || 7), nrw);
         return { schliessen: true, frist, neu: [{ datum: addDays(frist, P), aufgabe: 'Zahlungseingang prüfen (' + (STUFEN[aktion] || 'Abmahnung') + ', Frist ' + fmtDatum(frist) + ')' }] };
       }
       case 'opos:emailMahnung': {
-        const frist = ctx.frist || addDays(h, Number(f.emailMahnung) || 7);
+        const frist = ctx.frist || naechsterWerktag(addDays(h, Number(f.emailMahnung) || 5), nrw);
         return { schliessen: true, frist, neu: [{ datum: addDays(frist, P), aufgabe: 'Zahlungseingang prüfen (E-Mail-Mahnung' + (ctx.abmahnung ? ' + Abmahnung' : '') + ', Frist ' + fmtDatum(frist) + ')' }] };
       }
       case 'opos:kuendigung': {
         const frist = ctx.frist || addDays(h, Number(f.kuendigung) || 14);
         return { schliessen: true, frist, neu: [
           { datum: frist, aufgabe: 'Räumung/Zahlung prüfen, ggf. Anwalt einschalten' },
-          { datum: addDays(h, 2), aufgabe: 'Original der Kündigung per Post versendet?' }] };
+          { datum: addDays(h, 1), aufgabe: 'Original der Kündigung per Post versendet?' }] };
       }
       case 'opos:anwalt':
-        return { schliessen: true, neu: [{ datum: addDays(h, Number(f.anwalt) || 14), aufgabe: 'Sachstand beim Anwalt erfragen' }] };
+        return { schliessen: true, neu: [{ datum: addDays(h, Number(f.anwalt) || 7), aufgabe: 'Sachstand beim Anwalt erfragen' }] };
       case 'opos:raten': {
         const r = ctx.raten || [];
         return { schliessen: true, neu: r.map(x => ({ datum: addDays(x.faellig, P), aufgabe: 'Rate ' + x.nr + '/' + r.length + ' (' + fmtEUR(x.betrag) + ', fällig ' + fmtDatum(x.faellig) + ') eingegangen?' })) };
@@ -637,31 +668,32 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
       case 'opos:erledigt': case 'ih:abgerechnet': case 'kaution:ausgezahlt':
         return { schliessen: true, neu: [] };
       case 'ih:gemeldet': {
-        const d = ctx.dringlichkeit === 'notfall' ? h : ctx.dringlichkeit === 'hoch' ? addWerktage(h, 1, nrw) : addWerktage(h, 3, nrw);
+        const d = ctx.dringlichkeit === 'notfall' ? h : ctx.dringlichkeit === 'hoch' ? h : addWerktage(h, 1, nrw);
         return { schliessen: false, neu: [{ datum: d, aufgabe: 'Handwerker anfragen' + (ctx.dringlichkeit === 'notfall' ? ' – NOTFALL' : '') }] };
       }
       case 'ih:angefragt':
-        return { schliessen: ['ih:gemeldet', 'ih:angefragt'], neu: [{ datum: addDays(h, Number(f.angebot) || 5), aufgabe: 'Angebot eingegangen?' }] };
+        return { schliessen: ['ih:gemeldet', 'ih:angefragt'], neu: [{ datum: addDays(h, Number(f.angebot) || 3), aufgabe: 'Angebot eingegangen?' }] };
       case 'ih:beauftragt':
-        return { schliessen: ['ih:gemeldet', 'ih:angefragt', 'ih:beauftragt'], neu: [{ datum: ctx.termin ? addDays(ctx.termin, 1) : addDays(h, Number(f.ausfuehrung) || 10), aufgabe: 'Ausführung prüfen' }] };
+        return { schliessen: ['ih:gemeldet', 'ih:angefragt', 'ih:beauftragt'], neu: [{ datum: ctx.termin ? addDays(ctx.termin, 1) : addDays(h, Number(f.ausfuehrung) || 5), aufgabe: 'Ausführung prüfen' }] };
       case 'ih:in_arbeit':
         return { schliessen: false, neu: [] };
       case 'ih:erledigt':
-        return { schliessen: true, neu: [{ datum: addDays(h, Number(f.rechnung) || 14), aufgabe: 'Rechnung da? Prüfen / ggf. an Mieter weiterbelasten' }] };
+        return { schliessen: true, neu: [{ datum: addDays(h, Number(f.rechnung) || 7), aufgabe: 'Rechnung da? Prüfen / ggf. an Mieter weiterbelasten' }] };
       case 'kaution:auszug': {
         const u = ctx.uebergabeAm || ctx.auszugAm || h;
         return { schliessen: ['kaution:auszug'], neu: [
           { datum: addDays(u, 1), aufgabe: 'Übergabeprotokoll prüfen' },
+          { datum: addDays(u, Number(f.kautionPruefen) || 14), aufgabe: 'Kaution: Schäden/Kosten ermitteln (Angebote, Rechnungen, NK-Stand)' },
           { datum: addMonths(u, 5), vorziehen: true, aufgabe: 'Ansprüche sichern – Verjährung § 548 BGB (6 Monate) am ' + fmtDatum(addMonths(u, 6)) }] };
       }
       case 'kaution:uebergabe': {
         const u = ctx.uebergabeAm || h;
-        return { schliessen: ['kaution:uebergabe'], neu: [{ datum: addMonths(u, Number(f.kautionAbrechnungMonate) || 3), aufgabe: 'Kautionsabrechnung erstellen' }] };
+        return { schliessen: ['kaution:uebergabe'], neu: [{ datum: addMonths(u, Number(f.kautionAbrechnungMonate) || 2), aufgabe: 'Kautionsabrechnung erstellen' }] };
       }
       case 'kaution:nkEinbehalt':
         return { schliessen: ['kaution:nkEinbehalt'], neu: ctx.nkDatum ? [{ datum: ctx.nkDatum, aufgabe: 'NK-Einbehalt auflösen (Betriebskostenabrechnung)' }] : [] };
       case 'kaution:abrechnung':
-        return { schliessen: ['kaution:uebergabe', 'kaution:abrechnung'], neu: [{ datum: addDays(h, Number(f.auszahlung) || 14), aufgabe: 'Auszahlung der Kaution erfolgt?' }] };
+        return { schliessen: ['kaution:uebergabe', 'kaution:abrechnung'], neu: [{ datum: addDays(h, Number(f.auszahlung) || 7), aufgabe: 'Auszahlung der Kaution erfolgt?' }] };
       default:
         return { schliessen: false, neu: [] };
     }
@@ -1626,7 +1658,7 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
     mieterName, briefanrede,
     defaultSettings, emptyData, normalize, migratePrototype, stufeAusText,
     offenSumme, kuendigungsCheck, verteileZahlung, kautionsabrechnung, verjaehrung, kautionAmpel, ratenplan,
-    monateText, defaultEmail, wvDatum, createWV, completeWV, snoozeWV, setWVDatum, plusEinheit, WV_EINHEITEN, defaultUI, closeWV, offeneWV, addVerlauf, wvRegeln, applyAction, findFall,
+    monateText, defaultEmail, taktUmstellen, wvDatum, createWV, completeWV, snoozeWV, setWVDatum, plusEinheit, WV_EINHEITEN, defaultUI, closeWV, offeneWV, addVerlauf, wvRegeln, applyAction, findFall,
     getPath, vorlageZuHTML, vorlageZuText,
     parseCSV, guessMapping, typAusText, importOPOS, normName, nameAufteilen, parseMietzeit, parseSaldo, parseWV, erkenneFormat, titelMieter, parseJsonBlatt, parseSaldenBlatt, findeMieter, saldoAbgleich, importSalden, parseTelefonliste, importTelefonliste, parseOposPdf, importOposPdf, nettoPosten, pdfUmlaute, typAusBuchung, monatsmieteSchaetzen, kwMontag, parseTermin, parseIhListe, adresseTeile, objektFinden, importIhListe, sstLesen, zeileLesen, listenZeileFinden, zelleSetzen, datumsStil, excelAenderungen, excelBlattAktualisieren, excelGeschrieben, spalteBuchstabe, datumSerial, adresseZuMieter, emailsZuMieter, adressbuchVerknuepfen, whgNr, asciiDateiname, buildEML
   };
@@ -2576,7 +2608,7 @@ Mit freundlichen Grüßen
     wvSnooze(ds) { const w = C.snoozeWV(App.data, ds.id, +ds.t, C.today(), UI().wvEinheit); App.commit(); toast('WV verschoben auf ' + fmtDatum(w.datum) + '.'); },
     async wvSnoozeFrei(ds) {
       const w = App.data.wv.find(x => x.id === ds.id); if (!w) return;
-      const letzte = App.f.snooze || { anzahl: 5, einheit: UI().wvEinheit };
+      const letzte = App.f.snooze || { anzahl: 2, einheit: UI().wvEinheit };
       const basis = C.maxISO(w.datum, C.today());
       const chips = [1, 2, 3, 4, 5, 7, 10, 14, 21, 30].map(n => '<button type="button" class="s" data-n="' + n + '">+' + n + '</button>').join('');
       const v = await formModal('WV verschieben', [
@@ -2955,7 +2987,7 @@ Mit freundlichen Grüßen
   /* ---------- Einstellungen ---------- */
   const FRIST_LABEL = {
     erinnerung: 'Zahlungserinnerung: Zahlungsfrist (Tage)', mahnung1: '1. Mahnung: Zahlungsfrist (Tage)', mahnungLetzte: 'Letzte Mahnung: Zahlungsfrist (Tage)',
-    emailMahnung: 'E-Mail-Mahnung (✉ Mahnen): Zahlungsfrist (Tage)', abmahnung: 'Abmahnung: Prüffrist (Tage)', kuendigung: 'Kündigung: Räumungs-/Prüffrist (Tage)', anwalt: 'Anwalt: Sachstand nach (Tagen)',
+    emailMahnung: 'E-Mail-Mahnung (✉ Mahnen): Zahlungsfrist (Tage)', kautionPruefen: 'Kaution: Schäden/Kosten ermitteln nach Übergabe (Tage)', abmahnung: 'Abmahnung: Prüffrist (Tage)', kuendigung: 'Kündigung: Räumungs-/Prüffrist (Tage)', anwalt: 'Anwalt: Sachstand nach (Tagen)',
     angebot: 'IH: Angebot eingegangen? nach (Tagen)', ausfuehrung: 'IH: Ausführung prüfen ohne Termin (Tage)', rechnung: 'IH: Rechnung prüfen nach Erledigung (Tage)',
     ihMieter: 'IH: Frist Anfrage an Handwerker (Tage)', weiterbelastung: 'IH: Zahlungsfrist Weiterbelastung (Tage)',
     kautionAbrechnungMonate: 'Kaution: Abrechnung nach Übergabe (Monate)', auszahlung: 'Kaution: Auszahlung prüfen nach (Tagen)', bankverbindung: 'Kaution: Frist Bankverbindung (Tage)'
@@ -3257,6 +3289,7 @@ Mit freundlichen Grüßen
       }
     });
     App.render();
+    if (App.data.meta.taktVorgezogen) { toast('Kürzerer WV-Takt aktiv: ' + App.data.meta.taktVorgezogen + ' offene automatische WV wurden vorgezogen. Abstände unter Einstellungen → Fristen & Regeln.', 'ok', 9000); App.data.meta.taktVorgezogen = 0; App.save(); }
     const lb = App.data.meta.lastBackup;
     if ((App.data.opos.length + App.data.ih.length + App.data.kaution.length) && (!lb || C.diffDays(lb.slice(0, 10), C.today()) >= 7))
       setTimeout(() => toast('Erinnerung: Das letzte Backup ist älter als eine Woche. Einstellungen → Backup exportieren.', 'warn', 8000), 800);

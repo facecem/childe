@@ -46,22 +46,23 @@ OPOS → **⇪ OPOS-Liste einlesen**. Die PDF oder Excel-Datei auswählen. Das F
 Die Liste kann **jeden Monat erneut eingelesen** werden. Bekannte Mieter werden am Namen und Mietbeginn erkannt, auch wenn der Name auf 30 Zeichen abgeschnitten ist. Geänderte Salden landen mit Differenz im Verlauf. WV und Notizen werden nicht doppelt angelegt. Wer möchte, lässt Fälle, die nicht mehr in der Liste stehen, automatisch als erledigt markieren.
 Ein Saldo ist nicht nach Miete und Sonstigem aufgeschlüsselt. Er zählt deshalb nicht für den Kündigungscheck, bis die Einzelposten eingelesen sind.
 
-### WV-Regeln (Kernstück)
+### WV-Regeln (Kernstück, kurzer Takt)
 
-WV landen nie auf einem Wochenende oder NRW-Feiertag: Sie rutschen auf den nächsten Werktag.
-Die Verjährungs-WV wird stattdessen auf den *vorherigen* Werktag vorgezogen.
-Die Fristen und der Puffer (Standard 3 Tage) sind in den Einstellungen änderbar.
+WV landen nie auf einem Wochenende oder NRW-Feiertag: Sie rutschen auf den nächsten Werktag. Die Verjährungs-WV wird stattdessen auf den *vorherigen* Werktag vorgezogen. Zahlungsfristen in Schreiben liegen immer auf einem Werktag.
+Alle Abstände sind unter Einstellungen → Fristen & Regeln änderbar. Standard ist ein **Puffer von 1 Tag** nach Fristablauf.
 
 | Bereich | Auslöser | WV |
 |---|---|---|
-| OPOS | Erinnerung, Mahnung, letzte Mahnung, Abmahnung | Frist + Puffer: „Zahlungseingang prüfen“ |
-| OPOS | Kündigung | Frist: „Räumung/Zahlung prüfen“, dazu +2 Tage „Original per Post versendet?“ |
-| OPOS | Anwalt | +14 Tage: „Sachstand Anwalt“ |
-| OPOS | Ratenzahlung | je Rate: Fälligkeit + Puffer |
-| IH | Schaden gemeldet | Notfall heute, hoch +1 Werktag, normal +3 Werktage: „Handwerker anfragen“ |
-| IH | Angefragt, beauftragt, erledigt | +5 Tage „Angebot?“, Termin +1 Tag (sonst +10) „Ausführung prüfen“, +14 Tage „Rechnung prüfen“ |
-| Kaution | Auszug/Übergabe | +1 Tag „Übergabeprotokoll“, +3 Monate „Abrechnung erstellen“, **+5 Monate „Ansprüche sichern – Verjährung § 548 BGB“** |
-| Kaution | NK-Einbehalt, Abrechnung | Datum der NK-Abrechnung „Einbehalt auflösen“, +14 Tage „Auszahlung erfolgt?“ |
+| OPOS | Erinnerung / 1. Mahnung / Abmahnung (Frist 7 T), letzte Mahnung (5 T), ✉ E-Mail-Mahnung (5 T) | Frist + 1 Tag: „Zahlungseingang prüfen“ |
+| OPOS | Kündigung | +1 Tag „Original per Post versendet?“, Räumungsfrist „Räumung/Zahlung prüfen“ |
+| OPOS | Anwalt / Ratenzahlung | +7 Tage „Sachstand Anwalt“ / je Rate Fälligkeit + 1 Tag |
+| IH | Schaden gemeldet | Notfall und hoch: heute, normal: nächster Werktag „Handwerker anfragen“ |
+| IH | Angefragt / beauftragt / erledigt | +3 Tage „Angebot?“, Termin +1 Tag (ohne Termin +5) „Ausführung prüfen“, +7 Tage „Rechnung prüfen“ |
+| Kaution | Auszug/Übergabe | +1 Tag Protokoll, +14 Tage „Schäden/Kosten ermitteln“, +2 Monate „Abrechnung erstellen“, **+5 Monate Verjährung § 548 BGB** |
+| Kaution | Abrechnung | +7 Tage „Auszahlung erfolgt?“ |
+
+Neue manuelle WV werden standardmäßig in 2 Tagen vorgeschlagen, dazu die Schnell-Buttons +1 bis +4 und +… .
+Bestehende Daten wurden beim ersten Start einmalig umgestellt: Alte Standardabstände wurden verkürzt, offene automatische WV vorgezogen. Eigene Werte bleiben unverändert.
 
 Eine neue Aktion schließt die vorherigen automatischen WV des Falls. Manuelle WV bleiben stehen.
 

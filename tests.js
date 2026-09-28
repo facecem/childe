@@ -111,8 +111,8 @@ function testData() {
 }
 let d = testData();
 let res = C.applyAction(d, 'opos', 'o1', 'erinnerung', { heute: '2026-09-28' });
-eq(res.frist, '2026-10-08', 'Erinnerung Frist +10');
-eq(d.wv.map(w => [w.datum, w.status]), [['2026-10-12', 'offen']], 'WV = Frist + 3 Puffer → Werktag (So → Mo)');
+eq(res.frist, '2026-10-05', 'Erinnerung Frist +7');
+eq(d.wv.map(w => [w.datum, w.status]), [['2026-10-06', 'offen']], 'WV = Frist + 1 Tag Puffer');
 eq(d.opos[0].stufe, 'erinnerung', 'Stufe fortgeschrieben');
 res = C.applyAction(d, 'opos', 'o1', 'mahnung1', { heute: '2026-10-12' });
 eq(d.wv.filter(w => w.status === 'offen').length, 1, 'Mahnung schließt vorherige WV');
@@ -120,29 +120,29 @@ eq(d.wv[0].status, 'erledigt', 'alte WV erledigt');
 d.wv.push({ id: 'man', bereich: 'opos', refId: 'o1', datum: '2026-10-20', aufgabe: 'manuell', status: 'offen', erstelltDurch: 'manuell' });
 C.applyAction(d, 'opos', 'o1', 'kuendigung', { heute: '2026-11-02' });
 const offen = C.offeneWV(d, 'opos', 'o1');
-eq(offen.map(w => [w.datum, w.aufgabe.slice(0, 14)]), [['2026-11-04', 'Original der K'], ['2026-11-16', 'Räumung/Zahlun'], ['2026-10-20', 'manuell']].sort((a, b) => a[0].localeCompare(b[0])), 'Kündigung: Frist + „Original per Post“ +2, manuelle WV bleibt');
+eq(offen.map(w => [w.datum, w.aufgabe.slice(0, 14)]), [['2026-11-03', 'Original der K'], ['2026-11-16', 'Räumung/Zahlun'], ['2026-10-20', 'manuell']].sort((a, b) => a[0].localeCompare(b[0])), 'Kündigung: Frist + „Original per Post“ +1, manuelle WV bleibt');
 C.applyAction(d, 'opos', 'o1', 'anwalt', { heute: '2026-11-20' });
-eq(C.offeneWV(d, 'opos', 'o1').filter(w => w.erstelltDurch === 'auto').map(w => w.datum), ['2026-12-04'], 'Anwalt +14');
+eq(C.offeneWV(d, 'opos', 'o1').filter(w => w.erstelltDurch === 'auto').map(w => w.datum), ['2026-11-27'], 'Anwalt +7');
 d = testData();
 C.applyAction(d, 'opos', 'o1', 'raten', { heute: '2026-09-28', raten: C.ratenplan(900, 3, '2026-10-15') });
-eq(C.offeneWV(d, 'opos', 'o1').map(w => w.datum), ['2026-10-19', '2026-11-18', '2026-12-18'], 'je Rate Fälligkeit + Puffer (Werktag)');
+eq(C.offeneWV(d, 'opos', 'o1').map(w => w.datum), ['2026-10-16', '2026-11-16', '2026-12-16'], 'je Rate Fälligkeit + 1 Tag');
 
 d = testData();
 C.applyAction(d, 'ih', 'i1', 'gemeldet', { heute: '2026-10-02', dringlichkeit: 'notfall' });
 eq(C.offeneWV(d, 'ih', 'i1')[0].datum, '2026-10-02', 'IH Notfall: heute');
 d = testData();
 C.applyAction(d, 'ih', 'i1', 'gemeldet', { heute: '2026-10-02', dringlichkeit: 'hoch' });
-eq(C.offeneWV(d, 'ih', 'i1')[0].datum, '2026-10-05', 'IH hoch: +1 Werktag (Fr → Mo, 03.10. Feiertag)');
+eq(C.offeneWV(d, 'ih', 'i1')[0].datum, '2026-10-02', 'IH hoch: sofort');
 d = testData();
 C.applyAction(d, 'ih', 'i1', 'gemeldet', { heute: '2026-10-01', dringlichkeit: 'normal' });
-eq(C.offeneWV(d, 'ih', 'i1')[0].datum, '2026-10-06', 'IH normal: +3 Werktage');
+eq(C.offeneWV(d, 'ih', 'i1')[0].datum, '2026-10-02', 'IH normal: +1 Werktag');
 C.applyAction(d, 'ih', 'i1', 'angefragt', { heute: '2026-10-06' });
-eq(C.offeneWV(d, 'ih', 'i1').map(w => [w.datum, w.aufgabe]), [['2026-10-12', 'Angebot eingegangen?']], 'Angefragt +5, schließt „Handwerker anfragen“');
+eq(C.offeneWV(d, 'ih', 'i1').map(w => [w.datum, w.aufgabe]), [['2026-10-09', 'Angebot eingegangen?']], 'Angefragt +3, schließt „Handwerker anfragen“');
 C.applyAction(d, 'ih', 'i1', 'beauftragt', { heute: '2026-10-12', termin: '2026-10-22' });
 eq(C.offeneWV(d, 'ih', 'i1').map(w => w.datum), ['2026-10-23'], 'Beauftragt: Termin +1');
 eq(d.ih[0].status, 'beauftragt', 'IH-Status fortgeschrieben');
 C.applyAction(d, 'ih', 'i1', 'erledigt', { heute: '2026-10-23' });
-eq(C.offeneWV(d, 'ih', 'i1').map(w => w.datum), ['2026-11-06'], 'Erledigt +14 Rechnung');
+eq(C.offeneWV(d, 'ih', 'i1').map(w => w.datum), ['2026-10-30'], 'Erledigt +7 Rechnung');
 C.applyAction(d, 'ih', 'i1', 'abgerechnet', { heute: '2026-11-06' });
 eq(C.offeneWV(d, 'ih', 'i1').length, 0, 'Abgerechnet schließt alles');
 
@@ -150,8 +150,8 @@ d = testData();
 C.applyAction(d, 'kaution', 'k1', 'auszug', { heute: '2026-09-30', auszugAm: '2026-09-30', uebergabeAm: '2026-09-30' });
 C.applyAction(d, 'kaution', 'k1', 'uebergabe', { heute: '2026-09-30', uebergabeAm: '2026-09-30' });
 eq(C.offeneWV(d, 'kaution', 'k1').map(w => [w.datum, w.aufgabe.slice(0, 20)]),
-  [['2026-10-01', 'Übergabeprotokoll pr'], ['2026-12-30', 'Kautionsabrechnung e'], ['2027-02-26', 'Ansprüche sichern – ']],
-  'Auszug: +1 Protokoll, +3 Mon. Abrechnung, +5 Mon. Verjährung (So 28.02. → vorgezogen auf Fr)');
+  [['2026-10-01', 'Übergabeprotokoll pr'], ['2026-10-14', 'Kaution: Schäden/Kos'], ['2026-11-30', 'Kautionsabrechnung e'], ['2027-02-26', 'Ansprüche sichern – ']],
+  'Auszug: +1 Protokoll, +14 Kosten ermitteln, +2 Mon. Abrechnung, +5 Mon. Verjährung (So 28.02. → vorgezogen auf Fr)');
 eq(d.kaution[0].status, 'in_pruefung', 'Kaution in Prüfung');
 C.applyAction(d, 'kaution', 'k1', 'abrechnung', { heute: '2026-12-30' });
 const kOffen = C.offeneWV(d, 'kaution', 'k1').map(w => w.aufgabe.slice(0, 20));
@@ -182,7 +182,7 @@ eq(C.monateText([p('2025-12-03', 1), p('2026-01-03', 1), p('2026-02-03', 1)]), '
 eq(C.monateText([p('2026-09-03', 800)]), 'September 2026', 'Monatstext ein Monat');
 d = testData();
 C.applyAction(d, 'opos', 'o1', 'emailMahnung', { heute: '2026-09-28', abmahnung: true });
-eq([d.opos[0].stufe, d.opos[0].abmahnungAm, C.offeneWV(d, 'opos', 'o1').map(w => w.datum)], ['mahnung1', '2026-09-28', ['2026-10-08']], 'E-Mail-Mahnung: Stufe, Abmahnung, WV Frist 7 + 3');
+eq([d.opos[0].stufe, d.opos[0].abmahnungAm, C.offeneWV(d, 'opos', 'o1').map(w => w.datum)], ['mahnung1', '2026-09-28', ['2026-10-06']], 'E-Mail-Mahnung: Frist +5 (03.10. Feiertag → 05.10.), WV +1');
 truthy(/Sauren/.test(C.normalize({}).settings.email.signatur), 'Signatur-Standard');
 
 section('Telefonliste (PDF) → Adressbuch');
@@ -287,6 +287,16 @@ eq(C.zeileLesen(rx.sheet, 3, sstx)[9], '07.10.2026 anrufen', 'Zusatztext bleibt:
 truthy(/<c r="E3"[^>]*>.*<\/c><c r="J3".*<c r="K3"/.test(rx.sheet), 'neue Zelle in richtiger Spaltenreihenfolge');
 const rk = C.excelBlattAktualisieren(C.zelleSetzen(sx, 'J2', { text: '01.12.' }), sstx, stx, [{ f: fa, wv: '2026-10-05', schritt: null }]);
 eq([rk.ok.length, rk.konflikt.length, rk.konflikt[0].inExcel], [0, 1, '01.12.'], 'in Excel von Hand geändert → nicht überschrieben');
+
+section('Kürzerer WV-Takt (Umstellung alter Daten)');
+const altT = C.emptyData(); altT.meta.takt = 1;
+Object.assign(altT.settings.fristen, { erinnerung: 10, anwalt: 14, angebot: 21 }); altT.settings.puffer = 3; altT.settings.ui.neuWvTage = 7;
+altT.wv.push({ id: 'a', bereich: 'opos', refId: 'x', datum: '2026-10-12', aufgabe: 'Zahlungseingang prüfen (Zahlungserinnerung, Frist 08.10.2026)', status: 'offen', erstelltDurch: 'auto', regel: 'opos:erinnerung', erstelltAm: '2026-09-28' },
+  { id: 'b', bereich: 'opos', refId: 'x', datum: '2026-10-12', aufgabe: 'Sachstand beim Anwalt erfragen', status: 'offen', erstelltDurch: 'auto', regel: 'opos:anwalt', erstelltAm: '2026-09-28' },
+  { id: 'c', bereich: 'opos', refId: 'x', datum: '2026-10-01', aufgabe: 'manuell', status: 'offen', erstelltDurch: 'manuell', erstelltAm: '2026-09-28' });
+const nV = C.taktUmstellen(altT, '2026-09-28');
+eq([altT.settings.fristen.erinnerung, altT.settings.fristen.anwalt, altT.settings.fristen.angebot, altT.settings.puffer, altT.settings.ui.neuWvTage], [7, 7, 21, 1, 2], 'Standardwerte umgestellt, eigene Werte (21) bleiben');
+eq([nV, altT.wv.map(w => w.datum)], [2, ['2026-10-09', '2026-10-05', '2026-10-01']], 'offene Auto-WV vorgezogen (Frist + 1, Anwalt +7), manuelle bleibt');
 
 section('Vorlagen');
 const html = C.vorlageZuHTML('Hallo {{m.name}},\n\n{{postenTabelle}}\n\nSumme **{{s}}** <x>\nZeile {{fehlt}}', { m: { name: 'A & B' }, postenTabelle: '<table>\n<tr><td>1</td></tr></table>', s: '1,00 €' });
