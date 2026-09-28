@@ -674,6 +674,13 @@
     const s = String(v).trim();
     let m = s.match(/(\d{1,2})\.(\d{1,2})\.(\d{2,4})/);
     if (m) return parseDatum(m[0]);
+    const mn = s.match(/(\d{1,2})\.\s*(Jan|Feb|Mär|Mrz|Mar|Apr|Mai|May|Jun|Jul|Aug|Sep|Okt|Oct|Nov|Dez|Dec)[a-zä]*\.?/i);
+    if (mn) {
+      const nr = { jan: 1, feb: 2, mär: 3, mrz: 3, mar: 3, apr: 4, mai: 5, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, okt: 10, oct: 10, nov: 11, dez: 12, dec: 12 }[mn[2].toLowerCase()];
+      let iso = stand.slice(0, 4) + '-' + pad(nr) + '-' + pad(mn[1]);
+      if (diffDays(iso, stand) > 90) iso = addMonths(iso, 12);
+      return iso;
+    }
     m = s.match(/(?:^|\bWV\s*)(\d{1,2})\.(\d{1,2})\.?(?:\s|$)/i);
     if (m && +m[1] <= 31 && +m[2] <= 12) {
       let iso = stand.slice(0, 4) + '-' + pad(m[2]) + '-' + pad(m[1]);
@@ -1174,6 +1181,141 @@
     return st;
   }
 
+  /* ---------- Instandhaltungsliste (Excel, TO-DO-Liste) ---------- */
+  /** Montag der Kalenderwoche (ISO 8601) */
+  function kwMontag(kw, jahr) {
+    const j4 = new Date(Date.UTC(jahr, 0, 4)); const dow = (j4.getUTCDay() + 6) % 7;
+    j4.setUTCDate(j4.getUTCDate() - dow + (kw - 1) * 7); return isoFromDate(j4);
+  }
+  function kwVon(iso) { const d = dateFromISO(iso); const dow = (d.getUTCDay() + 6) % 7; d.setUTCDate(d.getUTCDate() - dow + 3); const j1 = new Date(Date.UTC(d.getUTCFullYear(), 0, 4)); return 1 + Math.round(((d - j1) / 86400000 - 3 + ((j1.getUTCDay() + 6) % 7)) / 7); }
+  /** Termin aus Datum, „23.09.2026 | 24.09“, „KW 40“, Freitext → { datum, text } */
+  function parseTermin(v, stand) {
+    if (v == null || v === '') return { datum: '', text: '' };
+    if (v instanceof Date) return { datum: parseDatum(v), text: '' };
+    const s = String(v).trim();
+    const kw = s.match(/KW\s*(\d{1,2})/i);
+    if (kw) { let y = +stand.slice(0, 4); if (+kw[1] < kwVon(stand) - 20) y++; return { datum: kwMontag(+kw[1], y), text: s }; }
+    const d = parseWV(s, stand);
+    return { datum: d, text: d && /^\s*\d{1,2}\.\d{1,2}\.(\d{2,4})?\s*$/.test(s) ? '' : s };
+  }
+  function zellTextIH(v) { return v == null ? '' : v instanceof Date ? fmtDatum(parseDatum(v)) : typeof v === 'number' ? String(v) : String(v).replace(/[ \t]+/g, ' ').replace(/\s*\n\s*/g, '\n').trim(); }
+  const PRIO_RE = /^(a\+|aaa|aa|a|b|c)(\s*punkt)?$/i;
+  /**
+   * TO-DO-Liste der Instandhaltung zerlegen. Kopfzeilen („Objekt“ … „Aufgabe“) dürfen mehrfach vorkommen – es gilt die letzte.
+   * rows: sichtbare Zeilen, zeilen: Excel-Zeilennummern (optional)
+   */
+  function parseIhListe(rows, stand, zeilen) {
+    const out = []; let map = null; const zaehler = {};
+    rows.forEach((r, i) => {
+      const low = r.map(c => String(c == null ? '' : c).trim().toLowerCase());
+      if (low.includes('objekt') && low.includes('aufgabe')) {
+        map = {};
+        low.forEach((h, j) => {
+          if (h === 'objekt') map.objekt = j; else if (/^(sb|hausmeister|sachbearbeiter|zuständig)$/.test(h)) map.sb = j; else if (h === 'aufgabe') map.aufgabe = j;
+          else if (/material/.test(h)) map.material = j; else if (/^termin/.test(h)) map.termin = j; else if (/mieter|tel/.test(h)) map.mieter = j;
+          else if (/nächster schritt|naechster schritt|schritt/.test(h)) map.schritt = j; else if (/^wv$|wiedervorlage/.test(h)) map.wv = j; else if (/besonderheit|bemerkung/.test(h)) map.besonderheiten = j;
+          else if (/^prio/.test(h)) map.prio = j;
+        });
+        return;
+      }
+      if (!map || map.aufgabe == null) return;
+      const g = k => (map[k] == null ? null : r[map[k]]);
+      const aufgabe = zellTextIH(g('aufgabe')), objektText = zellTextIH(g('objekt')).replace(/\n/g, ' ');
+      if (!aufgabe && !objektText) return;
+      let prio = zellTextIH(g('prio')), mieterInfo = zellTextIH(g('mieter')), schritt = zellTextIH(g('schritt'));
+      if (PRIO_RE.test(mieterInfo)) { prio = prio || mieterInfo; mieterInfo = ''; }
+      if (PRIO_RE.test(schritt)) { prio = prio || schritt; schritt = ''; }
+      prio = prio ? prio.replace(/\s*punkt$/i, '').toUpperCase() : '';
+      const wvRoh = g('wv'); const wvDatum = parseWV(wvRoh, stand);
+      const wvText = wvRoh instanceof Date ? '' : zellTextIH(wvRoh).replace(/^(WV\s*)?\d{1,2}\.\s*(\d{1,2}\.?|[A-Za-zä]{3,}\.?)(\d{2,4})?\s*/i, '').trim();
+      const basis = normName(objektText).slice(0, 30) + '|' + normName(aufgabe).slice(0, 40);
+      zaehler[basis] = (zaehler[basis] || 0) + 1;
+      out.push({ key: basis + (zaehler[basis] > 1 ? '#' + zaehler[basis] : ''), zeile: zeilen ? zeilen[i] : i + 1, objektText, sb: zellTextIH(g('sb')), aufgabe,
+        titel: aufgabe.split('\n')[0].replace(/\s*\/\/.*$/, '').slice(0, 90) || objektText, material: zellTextIH(g('material')), termin: parseTermin(g('termin'), stand),
+        prio, mieterInfo, schritt, wv: wvDatum, wvText, besonderheiten: zellTextIH(g('besonderheiten')) });
+    });
+    return out;
+  }
+  function strNorm(s) { return String(s || '').toLowerCase().replace(/ß/g, 'ss').replace(/str\.|strasse/g, 'strasse').replace(/[^a-z0-9äöü]/g, ''); }
+  /** Adresse zerlegen: Straßenname + Hausnummer(n) („1 - 22“, „5+7+9“, „53-55“) */
+  function adresseTeile(s) {
+    s = String(s || '').replace(/\n/g, ' ');
+    const m = s.match(/^\s*(.*?[A-Za-zÄÖÜäöüß.])\s*(\d+)\s*[a-z]?\b((?:\s*[-–+,]\s*\d+\s*[a-z]?\b)*)/);
+    if (!m) return { name: strNorm(s), nummern: [] };
+    const nums = [+m[2]]; const rest = m[3] || '';
+    const rng = (m[2] + rest).match(/^(\d+)\s*[-–]\s*(\d+)/);
+    if (rng && +rng[2] > +rng[1] && +rng[2] - +rng[1] < 200) { for (let n = +rng[1]; n <= +rng[2]; n++) nums.push(n); }
+    else (rest.match(/\d+/g) || []).forEach(n => nums.push(+n));
+    return { name: strNorm(m[1]), nummern: nums };
+  }
+  /** Objekt zu einem Freitext wie „Am Alten Bahnhof 10 Haustür“ oder „Jakobstraße 25a, 3.OG rechts“ finden */
+  function objektFinden(data, text) {
+    const t = adresseTeile(text); if (!t.name || t.name.length < 5) return null;
+    let best = null, score = 0;
+    data.objekte.forEach(o => {
+      if (PLATZHALTER_OBJEKT.test(o.bezeichnung)) return;
+      [o.strasse, o.bezeichnung].filter(Boolean).forEach(adr => {
+        const a = adresseTeile(adr); if (!a.name || a.name.length < 5) return;
+        if (!(t.name === a.name || t.name.endsWith(a.name) || a.name.endsWith(t.name) || t.name.includes(a.name))) return;
+        let sc = t.name === a.name ? 2 : 1;
+        if (t.nummern.length && a.nummern.length) { if (a.nummern.includes(t.nummern[0])) sc += 3; else return; }
+        if (sc > score) { score = sc; best = o; }
+      });
+    });
+    return best;
+  }
+  /** Instandhaltungsliste übernehmen/abgleichen (Schlüssel: Objekt + Aufgabe) */
+  function importIhListe(data, eintraege, o = {}) {
+    const heute = o.heute || today(), stand = o.stand || heute;
+    const st = { neu: 0, geaendert: 0, unveraendert: 0, erledigt: 0, wiedereroeffnet: 0, wvNeu: 0, ohneObjekt: 0 };
+    const gesehen = new Set();
+    eintraege.forEach(e => {
+      gesehen.add(e.key);
+      const ob = objektFinden(data, e.objektText);
+      const felder = { objektText: e.objektText, sb: e.sb, prio: e.prio, material: e.material, naechsterSchritt: e.schritt, besonderheiten: e.besonderheiten, mieterInfo: e.mieterInfo,
+        termin: e.termin.datum || '', terminText: e.termin.text, wvText: e.wvText, beschreibung: e.aufgabe, titel: e.titel, listenZeile: e.zeile };
+      let f = data.ih.find(x => x.listenKey === e.key);
+      if (!f) {
+        f = Object.assign({ id: uid(), objektId: ob ? ob.id : '', mieterId: '', gemeldetAm: stand, dringlichkeit: /^(A\+|AAA|AA)$/.test(e.prio) ? 'hoch' : 'normal',
+          status: e.termin.datum ? 'beauftragt' : 'gemeldet', gewerk: '', verursacher: 'unklar', angebote: [], anfragen: [], fotos: [], quelle: 'ih-liste', listenKey: e.key }, felder);
+        data.ih.push(f); st.neu++;
+        addVerlauf(data, 'ih', f.id, 'import', 'Aus Instandhaltungsliste übernommen' + (o.blatt ? ' (' + o.blatt + ', Zeile ' + e.zeile + ')' : ''), heute);
+      } else {
+        const diff = ['sb', 'prio', 'material', 'naechsterSchritt', 'besonderheiten', 'termin', 'terminText', 'wvText', 'beschreibung'].filter(k => (f[k] || '') !== (felder[k] || ''));
+        if (['erledigt', 'abgerechnet'].includes(f.status)) { f.status = 'gemeldet'; st.wiedereroeffnet++; addVerlauf(data, 'ih', f.id, 'import', 'Wieder in der Instandhaltungsliste – erneut geöffnet', heute); }
+        if (diff.length) {
+          addVerlauf(data, 'ih', f.id, 'import', 'Liste geändert: ' + diff.map(k => ({ naechsterSchritt: 'nächster Schritt', terminText: 'Termin', wvText: 'WV', beschreibung: 'Aufgabe' }[k] || k) + (k === 'naechsterSchritt' && felder[k] ? ' „' + felder[k] + '“' : '')).join(', '), heute);
+          st.geaendert++;
+        } else st.unveraendert++;
+        Object.assign(f, felder);
+        if (!f.objektId && ob) f.objektId = ob.id;
+        if (f.termin && f.status === 'gemeldet') f.status = 'beauftragt';
+      }
+      if (!f.objektId) st.ohneObjekt++;
+      const offen = regel => data.wv.filter(w => w.bereich === 'ih' && w.refId === f.id && w.status === 'offen' && w.regel === regel);
+      // WV lt. Liste
+      const wvTag = e.wv || (e.wvText && !offen('ih-liste').length ? heute : '');
+      if (wvTag && !offen('ih-liste').some(w => w.datum === wvDatum(data, wvTag))) {
+        data.wv.filter(w => w.refId === f.id && w.regel === 'ih-liste' && w.status === 'offen').forEach(w => { w.status = 'erledigt'; w.erledigtAm = heute; });
+        createWV(data, 'ih', f.id, wvTag, (e.wvText ? e.wvText + ' – ' : '') + (e.schritt || e.titel), { erstelltDurch: 'manuell', regel: 'ih-liste', heute }); st.wvNeu++;
+      }
+      // Termin
+      if (e.termin.datum && !offen('ih-liste-termin').some(w => w.datum === wvDatum(data, e.termin.datum))) {
+        data.wv.filter(w => w.refId === f.id && w.regel === 'ih-liste-termin' && w.status === 'offen').forEach(w => { w.status = 'erledigt'; w.erledigtAm = heute; });
+        createWV(data, 'ih', f.id, e.termin.datum, 'Termin: ' + e.titel + (e.termin.text ? ' (' + e.termin.text + ')' : '') + ' – erledigt?', { erstelltDurch: 'manuell', regel: 'ih-liste-termin', heute }); st.wvNeu++;
+      }
+    });
+    if (o.fehlendeErledigen !== false) {
+      data.ih.filter(f => f.quelle === 'ih-liste' && !gesehen.has(f.listenKey) && !['erledigt', 'abgerechnet'].includes(f.status)).forEach(f => {
+        f.status = 'erledigt'; f.erledigtAm = heute;
+        data.wv.forEach(w => { if (w.bereich === 'ih' && w.refId === f.id && w.status === 'offen') { w.status = 'erledigt'; w.erledigtAm = heute; } });
+        addVerlauf(data, 'ih', f.id, 'import', 'Nicht mehr (sichtbar) in der Instandhaltungsliste – als erledigt markiert', heute); st.erledigt++;
+      });
+    }
+    data.meta.ihListeStand = stand;
+    return st;
+  }
+
   /* ---------- E-Mail (.eml) ---------- */
   function asciiDateiname(s) {
     return String(s).replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/Ä/g, 'Ae').replace(/Ö/g, 'Oe').replace(/Ü/g, 'Ue').replace(/ß/g, 'ss')
@@ -1206,7 +1348,7 @@
     offenSumme, kuendigungsCheck, verteileZahlung, kautionsabrechnung, verjaehrung, kautionAmpel, ratenplan,
     monateText, defaultEmail, wvDatum, createWV, completeWV, snoozeWV, setWVDatum, plusEinheit, WV_EINHEITEN, defaultUI, closeWV, offeneWV, addVerlauf, wvRegeln, applyAction, findFall,
     getPath, vorlageZuHTML, vorlageZuText,
-    parseCSV, guessMapping, typAusText, importOPOS, normName, nameAufteilen, parseMietzeit, parseSaldo, parseWV, erkenneFormat, titelMieter, parseJsonBlatt, parseSaldenBlatt, findeMieter, saldoAbgleich, importSalden, parseTelefonliste, importTelefonliste, parseOposPdf, importOposPdf, nettoPosten, pdfUmlaute, typAusBuchung, monatsmieteSchaetzen, adresseZuMieter, emailsZuMieter, adressbuchVerknuepfen, whgNr, asciiDateiname, buildEML
+    parseCSV, guessMapping, typAusText, importOPOS, normName, nameAufteilen, parseMietzeit, parseSaldo, parseWV, erkenneFormat, titelMieter, parseJsonBlatt, parseSaldenBlatt, findeMieter, saldoAbgleich, importSalden, parseTelefonliste, importTelefonliste, parseOposPdf, importOposPdf, nettoPosten, pdfUmlaute, typAusBuchung, monatsmieteSchaetzen, kwMontag, parseTermin, parseIhListe, adresseTeile, objektFinden, importIhListe, adresseZuMieter, emailsZuMieter, adressbuchVerknuepfen, whgNr, asciiDateiname, buildEML
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = Core;
   else root.Core = Core;

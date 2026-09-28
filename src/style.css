@@ -150,3 +150,4 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
 .chip.ty-miete{background:#eef3ff;color:#3a5bb8} .chip.ty-gutschrift{background:var(--gruen-soft);color:var(--gruen)} .chip.ty-sonstig{background:var(--gelb-soft);color:var(--gelb)}
 .multi b{font-weight:600}
 .multi.liste{grid-template-columns:1fr;gap:0;padding:0} .multi.liste label{display:flex;gap:8px;padding:4px 8px;border-bottom:1px solid var(--line2)} .multi.liste label:hover{background:var(--pri-soft)} .multi.liste b{margin-left:auto;white-space:nowrap}
+.card.naechster{border-left:4px solid var(--pri)} .card.naechster dl.kv{margin:0 0 8px}

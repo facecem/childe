@@ -245,6 +245,28 @@ eq([sO.aktualisiert, sO.unveraendert, d.opos[0].posten.length], [0, 1, 5], 'erne
 eq(C.monateText(d.opos[0].posten), 'August und September 2026', 'Mietmonate nach Verrechnung');
 eq([d.mieter[0].gesamtmiete, d.mieter[0].mieteGeschaetzt], [800, true], 'Monatsmiete aus vollen Mietposten geschätzt (ohne „Diff.“)');
 
+section('Instandhaltungsliste (Excel)');
+eq([C.kwMontag(40, 2026), C.kwMontag(1, 2027)], ['2026-09-28', '2027-01-04'], 'Montag der Kalenderwoche');
+eq([C.parseTermin('KW 41', '2026-09-28').datum, C.parseTermin('23.09.2026 | 24.09', '2026-09-01').datum, C.parseTermin('andere Angebote einholen', '2026-09-28')], ['2026-10-05', '2026-09-23', { datum: '', text: 'andere Angebote einholen' }], 'Termin: KW, Datum mit Zusatz, Freitext');
+eq([C.parseWV('21.Sep.', '2026-09-10'), C.parseWV('17.09. Alimi', '2026-09-10')], ['2026-09-21', '2026-09-17'], 'WV mit Monatsname und Zusatztext');
+const ihRows = [[null, 'KW12', 'Objekt', 'SB', 'Aufgabe', 'benötigtes Material ', 'Termin', 'Mieter + Tel Nr.', 'nächster Schritt', 'WV', 'Besonderheiten'],
+  [null, null, 'Musterweg 12, 2.OG links', 'Cem', 'Rollos instandsetzen\nMotor prüfen', 'Motor', new Date(2026, 9, 1), 'A+', 'Termin bestätigen', '30.09. Firma X', 'Schlüssel beim HM'],
+  [null, null, 'BR51 Büroeinheit', 'Fais', 'Büroeinheit herstellen', null, 'KW 41', 'B', null, 'anrufen', null],
+  [null, null, null, null, null, null, null, null, null, null, null]];
+const ihE = C.parseIhListe(ihRows, '2026-09-28', [226, 227, 228, 229]);
+eq(ihE.map(e => [e.zeile, e.objektText, e.sb, e.titel, e.prio, e.schritt, e.termin.datum, e.wv, e.wvText]),
+  [[227, 'Musterweg 12, 2.OG links', 'Cem', 'Rollos instandsetzen', 'A+', 'Termin bestätigen', '2026-10-01', '2026-09-30', 'Firma X'], [228, 'BR51 Büroeinheit', 'Fais', 'Büroeinheit herstellen', 'B', '', '2026-10-05', '', 'anrufen']], 'Liste: Spalten, Prio aus „Mieter“-Spalte, Termin, WV mit Text');
+d = C.emptyData(); d.objekte.push({ id: 'ob1', bezeichnung: 'Musterweg 10 - 14', strasse: 'Musterweg 10 - 14' }, { id: 'ob2', bezeichnung: 'Jakobstraße 25 A/B', strasse: 'Jakobstraße 25 A/B' });
+eq([C.objektFinden(d, 'Musterweg 12, 2.OG links').id, C.objektFinden(d, 'Jakobstraße 25a, Keller').id, C.objektFinden(d, 'Musterweg 30'), C.objektFinden(d, 'BR51 Büroeinheit')], ['ob1', 'ob2', null, null], 'Objekt über Straße + Hausnummer(nbereich)');
+let sI = C.importIhListe(d, ihE, { stand: '2026-09-28', heute: '2026-09-28', blatt: 'TO DO' });
+eq([sI.neu, sI.wvNeu, sI.ohneObjekt, d.ih[0].objektId, d.ih[0].status, d.ih[0].dringlichkeit], [2, 4, 1, 'ob1', 'beauftragt', 'hoch'], 'Import: Aufgaben, WV + Termin-WV, Objekt, Status, Prio → Dringlichkeit');
+sI = C.importIhListe(d, ihE, { stand: '2026-09-29', heute: '2026-09-29' });
+eq([sI.neu, sI.unveraendert, sI.wvNeu], [0, 2, 0], 'erneut einlesen: keine Doppelungen');
+const ihE2 = C.parseIhListe([ihRows[0], ihRows[1].map((c, i) => (i === 8 ? 'Firma anrufen' : c))], '2026-09-28');
+sI = C.importIhListe(d, ihE2, { stand: '2026-10-01', heute: '2026-10-01' });
+eq([sI.geaendert, sI.erledigt, d.ih[0].naechsterSchritt, d.ih[1].status], [1, 1, 'Firma anrufen', 'erledigt'], 'Änderung übernommen, ausgeblendete Aufgabe erledigt');
+eq(C.offeneWV(d, 'ih', d.ih[1].id).length, 0, 'WV der erledigten Aufgabe geschlossen');
+
 section('Vorlagen');
 const html = C.vorlageZuHTML('Hallo {{m.name}},\n\n{{postenTabelle}}\n\nSumme **{{s}}** <x>\nZeile {{fehlt}}', { m: { name: 'A & B' }, postenTabelle: '<table>\n<tr><td>1</td></tr></table>', s: '1,00 €' });
 eq(html, '<p>Hallo A &amp; B,</p>\n<table><tr><td>1</td></tr></table>\n<p>Summe <b>1,00 €</b> &lt;x&gt;<br>Zeile <mark>{{fehlt}}</mark></p>', 'vorlageZuHTML');

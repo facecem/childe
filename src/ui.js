@@ -14,7 +14,7 @@
     f: {
       dash: { bereich: '', zeit: 'faellig', objekt: '' },
       opos: { q: '', stufe: 'aktiv', sel: {} },
-      ih: { q: '', objekt: '', status: 'aktiv' },
+      ih: { q: '', objekt: '', status: 'aktiv', sb: '' },
       kaution: { q: '', status: 'aktiv' },
       stamm: { sub: 'mieter', q: '', objekt: '' },
       kontakte: { q: '', typ: '', sub: 'adressbuch', aq: '', aobj: '', afilter: '', mehr: 0 },
@@ -144,7 +144,7 @@
     },
     fallLabel(b, f) {
       if (!f) return '(gelöscht)';
-      if (b === 'ih') { const o = H.objekt(f.objektId); return f.titel + (o ? ' · ' + o.bezeichnung : ''); }
+      if (b === 'ih') { const o = H.objekt(f.objektId); return f.titel + (o ? ' · ' + o.bezeichnung : f.objektText ? ' · ' + f.objektText : ''); }
       const m = H.mieter(f.mieterId); const o = m && H.objekt(m.objektId);
       return C.mieterName(m) + (o ? ' · ' + o.bezeichnung + (m.whg ? ' ' + m.whg : '') : '');
     },

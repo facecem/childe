@@ -618,8 +618,16 @@ Mit freundlichen Grüßen
     const leer = r => r.some(c => c != null && String(c).trim() !== '');
     if (/\.(xlsx|xlsm|xlsb|xls|ods)$/i.test(file.name)) {
       const X = await loadLib('xlsx', 'XLSX');
-      const wb = X.read(await file.arrayBuffer(), { type: 'array', cellDates: true });
-      return wb.SheetNames.map(n => ({ name: n, rows: X.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: null }).filter(leer) }));
+      const wb = X.read(await file.arrayBuffer(), { type: 'array', cellDates: true, cellStyles: true });
+      // ausgeblendete Zeilen (z. B. erledigte Aufgaben) werden ignoriert
+      return wb.SheetNames.map(n => {
+        const ws = wb.Sheets[n]; if (!ws['!ref']) return { name: n, rows: [], zeilen: [], ausgeblendet: 0 };
+        const start = X.utils.decode_range(ws['!ref']).s.r, info = ws['!rows'] || [];
+        const alle = X.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null, blankrows: true });
+        const rows = [], zeilen = []; let ausgeblendet = 0;
+        alle.forEach((r, i) => { const nr = start + i; if (info[nr] && info[nr].hidden) { ausgeblendet++; return; } if (leer(r)) { rows.push(r); zeilen.push(nr + 1); } });
+        return { name: n, rows, zeilen, ausgeblendet };
+      });
     }
     const buf = await file.arrayBuffer();
     let text = new TextDecoder('utf-8').decode(buf);

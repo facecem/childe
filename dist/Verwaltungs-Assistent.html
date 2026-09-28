@@ -157,6 +157,7 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
 .chip.ty-miete{background:#eef3ff;color:#3a5bb8} .chip.ty-gutschrift{background:var(--gruen-soft);color:var(--gruen)} .chip.ty-sonstig{background:var(--gelb-soft);color:var(--gelb)}
 .multi b{font-weight:600}
 .multi.liste{grid-template-columns:1fr;gap:0;padding:0} .multi.liste label{display:flex;gap:8px;padding:4px 8px;border-bottom:1px solid var(--line2)} .multi.liste label:hover{background:var(--pri-soft)} .multi.liste b{margin-left:auto;white-space:nowrap}
+.card.naechster{border-left:4px solid var(--pri)} .card.naechster dl.kv{margin:0 0 8px}
 
 </style>
 </head>
@@ -848,6 +849,13 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
     const s = String(v).trim();
     let m = s.match(/(\d{1,2})\.(\d{1,2})\.(\d{2,4})/);
     if (m) return parseDatum(m[0]);
+    const mn = s.match(/(\d{1,2})\.\s*(Jan|Feb|Mär|Mrz|Mar|Apr|Mai|May|Jun|Jul|Aug|Sep|Okt|Oct|Nov|Dez|Dec)[a-zä]*\.?/i);
+    if (mn) {
+      const nr = { jan: 1, feb: 2, mär: 3, mrz: 3, mar: 3, apr: 4, mai: 5, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, okt: 10, oct: 10, nov: 11, dez: 12, dec: 12 }[mn[2].toLowerCase()];
+      let iso = stand.slice(0, 4) + '-' + pad(nr) + '-' + pad(mn[1]);
+      if (diffDays(iso, stand) > 90) iso = addMonths(iso, 12);
+      return iso;
+    }
     m = s.match(/(?:^|\bWV\s*)(\d{1,2})\.(\d{1,2})\.?(?:\s|$)/i);
     if (m && +m[1] <= 31 && +m[2] <= 12) {
       let iso = stand.slice(0, 4) + '-' + pad(m[2]) + '-' + pad(m[1]);
@@ -1348,6 +1356,141 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
     return st;
   }
 
+  /* ---------- Instandhaltungsliste (Excel, TO-DO-Liste) ---------- */
+  /** Montag der Kalenderwoche (ISO 8601) */
+  function kwMontag(kw, jahr) {
+    const j4 = new Date(Date.UTC(jahr, 0, 4)); const dow = (j4.getUTCDay() + 6) % 7;
+    j4.setUTCDate(j4.getUTCDate() - dow + (kw - 1) * 7); return isoFromDate(j4);
+  }
+  function kwVon(iso) { const d = dateFromISO(iso); const dow = (d.getUTCDay() + 6) % 7; d.setUTCDate(d.getUTCDate() - dow + 3); const j1 = new Date(Date.UTC(d.getUTCFullYear(), 0, 4)); return 1 + Math.round(((d - j1) / 86400000 - 3 + ((j1.getUTCDay() + 6) % 7)) / 7); }
+  /** Termin aus Datum, „23.09.2026 | 24.09“, „KW 40“, Freitext → { datum, text } */
+  function parseTermin(v, stand) {
+    if (v == null || v === '') return { datum: '', text: '' };
+    if (v instanceof Date) return { datum: parseDatum(v), text: '' };
+    const s = String(v).trim();
+    const kw = s.match(/KW\s*(\d{1,2})/i);
+    if (kw) { let y = +stand.slice(0, 4); if (+kw[1] < kwVon(stand) - 20) y++; return { datum: kwMontag(+kw[1], y), text: s }; }
+    const d = parseWV(s, stand);
+    return { datum: d, text: d && /^\s*\d{1,2}\.\d{1,2}\.(\d{2,4})?\s*$/.test(s) ? '' : s };
+  }
+  function zellTextIH(v) { return v == null ? '' : v instanceof Date ? fmtDatum(parseDatum(v)) : typeof v === 'number' ? String(v) : String(v).replace(/[ \t]+/g, ' ').replace(/\s*\n\s*/g, '\n').trim(); }
+  const PRIO_RE = /^(a\+|aaa|aa|a|b|c)(\s*punkt)?$/i;
+  /**
+   * TO-DO-Liste der Instandhaltung zerlegen. Kopfzeilen („Objekt“ … „Aufgabe“) dürfen mehrfach vorkommen – es gilt die letzte.
+   * rows: sichtbare Zeilen, zeilen: Excel-Zeilennummern (optional)
+   */
+  function parseIhListe(rows, stand, zeilen) {
+    const out = []; let map = null; const zaehler = {};
+    rows.forEach((r, i) => {
+      const low = r.map(c => String(c == null ? '' : c).trim().toLowerCase());
+      if (low.includes('objekt') && low.includes('aufgabe')) {
+        map = {};
+        low.forEach((h, j) => {
+          if (h === 'objekt') map.objekt = j; else if (/^(sb|hausmeister|sachbearbeiter|zuständig)$/.test(h)) map.sb = j; else if (h === 'aufgabe') map.aufgabe = j;
+          else if (/material/.test(h)) map.material = j; else if (/^termin/.test(h)) map.termin = j; else if (/mieter|tel/.test(h)) map.mieter = j;
+          else if (/nächster schritt|naechster schritt|schritt/.test(h)) map.schritt = j; else if (/^wv$|wiedervorlage/.test(h)) map.wv = j; else if (/besonderheit|bemerkung/.test(h)) map.besonderheiten = j;
+          else if (/^prio/.test(h)) map.prio = j;
+        });
+        return;
+      }
+      if (!map || map.aufgabe == null) return;
+      const g = k => (map[k] == null ? null : r[map[k]]);
+      const aufgabe = zellTextIH(g('aufgabe')), objektText = zellTextIH(g('objekt')).replace(/\n/g, ' ');
+      if (!aufgabe && !objektText) return;
+      let prio = zellTextIH(g('prio')), mieterInfo = zellTextIH(g('mieter')), schritt = zellTextIH(g('schritt'));
+      if (PRIO_RE.test(mieterInfo)) { prio = prio || mieterInfo; mieterInfo = ''; }
+      if (PRIO_RE.test(schritt)) { prio = prio || schritt; schritt = ''; }
+      prio = prio ? prio.replace(/\s*punkt$/i, '').toUpperCase() : '';
+      const wvRoh = g('wv'); const wvDatum = parseWV(wvRoh, stand);
+      const wvText = wvRoh instanceof Date ? '' : zellTextIH(wvRoh).replace(/^(WV\s*)?\d{1,2}\.\s*(\d{1,2}\.?|[A-Za-zä]{3,}\.?)(\d{2,4})?\s*/i, '').trim();
+      const basis = normName(objektText).slice(0, 30) + '|' + normName(aufgabe).slice(0, 40);
+      zaehler[basis] = (zaehler[basis] || 0) + 1;
+      out.push({ key: basis + (zaehler[basis] > 1 ? '#' + zaehler[basis] : ''), zeile: zeilen ? zeilen[i] : i + 1, objektText, sb: zellTextIH(g('sb')), aufgabe,
+        titel: aufgabe.split('\n')[0].replace(/\s*\/\/.*$/, '').slice(0, 90) || objektText, material: zellTextIH(g('material')), termin: parseTermin(g('termin'), stand),
+        prio, mieterInfo, schritt, wv: wvDatum, wvText, besonderheiten: zellTextIH(g('besonderheiten')) });
+    });
+    return out;
+  }
+  function strNorm(s) { return String(s || '').toLowerCase().replace(/ß/g, 'ss').replace(/str\.|strasse/g, 'strasse').replace(/[^a-z0-9äöü]/g, ''); }
+  /** Adresse zerlegen: Straßenname + Hausnummer(n) („1 - 22“, „5+7+9“, „53-55“) */
+  function adresseTeile(s) {
+    s = String(s || '').replace(/\n/g, ' ');
+    const m = s.match(/^\s*(.*?[A-Za-zÄÖÜäöüß.])\s*(\d+)\s*[a-z]?\b((?:\s*[-–+,]\s*\d+\s*[a-z]?\b)*)/);
+    if (!m) return { name: strNorm(s), nummern: [] };
+    const nums = [+m[2]]; const rest = m[3] || '';
+    const rng = (m[2] + rest).match(/^(\d+)\s*[-–]\s*(\d+)/);
+    if (rng && +rng[2] > +rng[1] && +rng[2] - +rng[1] < 200) { for (let n = +rng[1]; n <= +rng[2]; n++) nums.push(n); }
+    else (rest.match(/\d+/g) || []).forEach(n => nums.push(+n));
+    return { name: strNorm(m[1]), nummern: nums };
+  }
+  /** Objekt zu einem Freitext wie „Am Alten Bahnhof 10 Haustür“ oder „Jakobstraße 25a, 3.OG rechts“ finden */
+  function objektFinden(data, text) {
+    const t = adresseTeile(text); if (!t.name || t.name.length < 5) return null;
+    let best = null, score = 0;
+    data.objekte.forEach(o => {
+      if (PLATZHALTER_OBJEKT.test(o.bezeichnung)) return;
+      [o.strasse, o.bezeichnung].filter(Boolean).forEach(adr => {
+        const a = adresseTeile(adr); if (!a.name || a.name.length < 5) return;
+        if (!(t.name === a.name || t.name.endsWith(a.name) || a.name.endsWith(t.name) || t.name.includes(a.name))) return;
+        let sc = t.name === a.name ? 2 : 1;
+        if (t.nummern.length && a.nummern.length) { if (a.nummern.includes(t.nummern[0])) sc += 3; else return; }
+        if (sc > score) { score = sc; best = o; }
+      });
+    });
+    return best;
+  }
+  /** Instandhaltungsliste übernehmen/abgleichen (Schlüssel: Objekt + Aufgabe) */
+  function importIhListe(data, eintraege, o = {}) {
+    const heute = o.heute || today(), stand = o.stand || heute;
+    const st = { neu: 0, geaendert: 0, unveraendert: 0, erledigt: 0, wiedereroeffnet: 0, wvNeu: 0, ohneObjekt: 0 };
+    const gesehen = new Set();
+    eintraege.forEach(e => {
+      gesehen.add(e.key);
+      const ob = objektFinden(data, e.objektText);
+      const felder = { objektText: e.objektText, sb: e.sb, prio: e.prio, material: e.material, naechsterSchritt: e.schritt, besonderheiten: e.besonderheiten, mieterInfo: e.mieterInfo,
+        termin: e.termin.datum || '', terminText: e.termin.text, wvText: e.wvText, beschreibung: e.aufgabe, titel: e.titel, listenZeile: e.zeile };
+      let f = data.ih.find(x => x.listenKey === e.key);
+      if (!f) {
+        f = Object.assign({ id: uid(), objektId: ob ? ob.id : '', mieterId: '', gemeldetAm: stand, dringlichkeit: /^(A\+|AAA|AA)$/.test(e.prio) ? 'hoch' : 'normal',
+          status: e.termin.datum ? 'beauftragt' : 'gemeldet', gewerk: '', verursacher: 'unklar', angebote: [], anfragen: [], fotos: [], quelle: 'ih-liste', listenKey: e.key }, felder);
+        data.ih.push(f); st.neu++;
+        addVerlauf(data, 'ih', f.id, 'import', 'Aus Instandhaltungsliste übernommen' + (o.blatt ? ' (' + o.blatt + ', Zeile ' + e.zeile + ')' : ''), heute);
+      } else {
+        const diff = ['sb', 'prio', 'material', 'naechsterSchritt', 'besonderheiten', 'termin', 'terminText', 'wvText', 'beschreibung'].filter(k => (f[k] || '') !== (felder[k] || ''));
+        if (['erledigt', 'abgerechnet'].includes(f.status)) { f.status = 'gemeldet'; st.wiedereroeffnet++; addVerlauf(data, 'ih', f.id, 'import', 'Wieder in der Instandhaltungsliste – erneut geöffnet', heute); }
+        if (diff.length) {
+          addVerlauf(data, 'ih', f.id, 'import', 'Liste geändert: ' + diff.map(k => ({ naechsterSchritt: 'nächster Schritt', terminText: 'Termin', wvText: 'WV', beschreibung: 'Aufgabe' }[k] || k) + (k === 'naechsterSchritt' && felder[k] ? ' „' + felder[k] + '“' : '')).join(', '), heute);
+          st.geaendert++;
+        } else st.unveraendert++;
+        Object.assign(f, felder);
+        if (!f.objektId && ob) f.objektId = ob.id;
+        if (f.termin && f.status === 'gemeldet') f.status = 'beauftragt';
+      }
+      if (!f.objektId) st.ohneObjekt++;
+      const offen = regel => data.wv.filter(w => w.bereich === 'ih' && w.refId === f.id && w.status === 'offen' && w.regel === regel);
+      // WV lt. Liste
+      const wvTag = e.wv || (e.wvText && !offen('ih-liste').length ? heute : '');
+      if (wvTag && !offen('ih-liste').some(w => w.datum === wvDatum(data, wvTag))) {
+        data.wv.filter(w => w.refId === f.id && w.regel === 'ih-liste' && w.status === 'offen').forEach(w => { w.status = 'erledigt'; w.erledigtAm = heute; });
+        createWV(data, 'ih', f.id, wvTag, (e.wvText ? e.wvText + ' – ' : '') + (e.schritt || e.titel), { erstelltDurch: 'manuell', regel: 'ih-liste', heute }); st.wvNeu++;
+      }
+      // Termin
+      if (e.termin.datum && !offen('ih-liste-termin').some(w => w.datum === wvDatum(data, e.termin.datum))) {
+        data.wv.filter(w => w.refId === f.id && w.regel === 'ih-liste-termin' && w.status === 'offen').forEach(w => { w.status = 'erledigt'; w.erledigtAm = heute; });
+        createWV(data, 'ih', f.id, e.termin.datum, 'Termin: ' + e.titel + (e.termin.text ? ' (' + e.termin.text + ')' : '') + ' – erledigt?', { erstelltDurch: 'manuell', regel: 'ih-liste-termin', heute }); st.wvNeu++;
+      }
+    });
+    if (o.fehlendeErledigen !== false) {
+      data.ih.filter(f => f.quelle === 'ih-liste' && !gesehen.has(f.listenKey) && !['erledigt', 'abgerechnet'].includes(f.status)).forEach(f => {
+        f.status = 'erledigt'; f.erledigtAm = heute;
+        data.wv.forEach(w => { if (w.bereich === 'ih' && w.refId === f.id && w.status === 'offen') { w.status = 'erledigt'; w.erledigtAm = heute; } });
+        addVerlauf(data, 'ih', f.id, 'import', 'Nicht mehr (sichtbar) in der Instandhaltungsliste – als erledigt markiert', heute); st.erledigt++;
+      });
+    }
+    data.meta.ihListeStand = stand;
+    return st;
+  }
+
   /* ---------- E-Mail (.eml) ---------- */
   function asciiDateiname(s) {
     return String(s).replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/Ä/g, 'Ae').replace(/Ö/g, 'Oe').replace(/Ü/g, 'Ue').replace(/ß/g, 'ss')
@@ -1380,7 +1523,7 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
     offenSumme, kuendigungsCheck, verteileZahlung, kautionsabrechnung, verjaehrung, kautionAmpel, ratenplan,
     monateText, defaultEmail, wvDatum, createWV, completeWV, snoozeWV, setWVDatum, plusEinheit, WV_EINHEITEN, defaultUI, closeWV, offeneWV, addVerlauf, wvRegeln, applyAction, findFall,
     getPath, vorlageZuHTML, vorlageZuText,
-    parseCSV, guessMapping, typAusText, importOPOS, normName, nameAufteilen, parseMietzeit, parseSaldo, parseWV, erkenneFormat, titelMieter, parseJsonBlatt, parseSaldenBlatt, findeMieter, saldoAbgleich, importSalden, parseTelefonliste, importTelefonliste, parseOposPdf, importOposPdf, nettoPosten, pdfUmlaute, typAusBuchung, monatsmieteSchaetzen, adresseZuMieter, emailsZuMieter, adressbuchVerknuepfen, whgNr, asciiDateiname, buildEML
+    parseCSV, guessMapping, typAusText, importOPOS, normName, nameAufteilen, parseMietzeit, parseSaldo, parseWV, erkenneFormat, titelMieter, parseJsonBlatt, parseSaldenBlatt, findeMieter, saldoAbgleich, importSalden, parseTelefonliste, importTelefonliste, parseOposPdf, importOposPdf, nettoPosten, pdfUmlaute, typAusBuchung, monatsmieteSchaetzen, kwMontag, parseTermin, parseIhListe, adresseTeile, objektFinden, importIhListe, adresseZuMieter, emailsZuMieter, adressbuchVerknuepfen, whgNr, asciiDateiname, buildEML
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = Core;
   else root.Core = Core;
@@ -2007,8 +2150,16 @@ Mit freundlichen Grüßen
     const leer = r => r.some(c => c != null && String(c).trim() !== '');
     if (/\.(xlsx|xlsm|xlsb|xls|ods)$/i.test(file.name)) {
       const X = await loadLib('xlsx', 'XLSX');
-      const wb = X.read(await file.arrayBuffer(), { type: 'array', cellDates: true });
-      return wb.SheetNames.map(n => ({ name: n, rows: X.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: null }).filter(leer) }));
+      const wb = X.read(await file.arrayBuffer(), { type: 'array', cellDates: true, cellStyles: true });
+      // ausgeblendete Zeilen (z. B. erledigte Aufgaben) werden ignoriert
+      return wb.SheetNames.map(n => {
+        const ws = wb.Sheets[n]; if (!ws['!ref']) return { name: n, rows: [], zeilen: [], ausgeblendet: 0 };
+        const start = X.utils.decode_range(ws['!ref']).s.r, info = ws['!rows'] || [];
+        const alle = X.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null, blankrows: true });
+        const rows = [], zeilen = []; let ausgeblendet = 0;
+        alle.forEach((r, i) => { const nr = start + i; if (info[nr] && info[nr].hidden) { ausgeblendet++; return; } if (leer(r)) { rows.push(r); zeilen.push(nr + 1); } });
+        return { name: n, rows, zeilen, ausgeblendet };
+      });
     }
     const buf = await file.arrayBuffer();
     let text = new TextDecoder('utf-8').decode(buf);
@@ -2058,7 +2209,7 @@ Mit freundlichen Grüßen
     f: {
       dash: { bereich: '', zeit: 'faellig', objekt: '' },
       opos: { q: '', stufe: 'aktiv', sel: {} },
-      ih: { q: '', objekt: '', status: 'aktiv' },
+      ih: { q: '', objekt: '', status: 'aktiv', sb: '' },
       kaution: { q: '', status: 'aktiv' },
       stamm: { sub: 'mieter', q: '', objekt: '' },
       kontakte: { q: '', typ: '', sub: 'adressbuch', aq: '', aobj: '', afilter: '', mehr: 0 },
@@ -2188,7 +2339,7 @@ Mit freundlichen Grüßen
     },
     fallLabel(b, f) {
       if (!f) return '(gelöscht)';
-      if (b === 'ih') { const o = H.objekt(f.objektId); return f.titel + (o ? ' · ' + o.bezeichnung : ''); }
+      if (b === 'ih') { const o = H.objekt(f.objektId); return f.titel + (o ? ' · ' + o.bezeichnung : f.objektText ? ' · ' + f.objektText : ''); }
       const m = H.mieter(f.mieterId); const o = m && H.objekt(m.objektId);
       return C.mieterName(m) + (o ? ' · ' + o.bezeichnung + (m.whg ? ' ' + m.whg : '') : '');
     },
@@ -3454,33 +3605,43 @@ Mit freundlichen Grüßen
   const VERURSACHER = { unklar: 'unklar', verschleiss: 'Verschleiß / Alterung', mieter: 'Mieter' };
   const REIHE = ['gemeldet', 'angefragt', 'beauftragt', 'in_arbeit', 'erledigt', 'abgerechnet'];
 
+  const objektName = x => (H.objekt(x.objektId) || {}).bezeichnung || x.objektText || '–';
+  const PRIO_CLS = { 'A+': 'rot', AAA: 'rot', AA: 'rot', A: 'gelb', B: 'blau', C: '' };
+  const aktiv = x => !(x.status === 'abgerechnet' || (x.status === 'erledigt' && x.quelle === 'ih-liste'));
   function tabelle(list) {
-    return '<table class="tbl" id="ihTabelle"><thead><tr><th>gemeldet</th><th>Objekt / Whg</th><th>Schaden</th><th>Dringl.</th><th>Status</th><th>Handwerker</th><th class="r">Kosten</th><th>nächste WV</th></tr></thead><tbody>' +
+    return '<table class="tbl" id="ihTabelle"><thead><tr><th>Objekt</th><th>Aufgabe / nächster Schritt</th><th>SB</th><th>Prio</th><th>Status</th><th>Termin</th><th>nächste WV</th></tr></thead><tbody>' +
       list.map(x => {
-        const o = H.objekt(x.objektId) || {}; const m = H.mieter(x.mieterId); const hw = H.kontakt(x.handwerkerId);
-        return '<tr class="klick" data-act="openFall" data-b="ih" data-id="' + x.id + '"><td>' + fmtDatum(x.gemeldetAm) + '</td><td>' + esc(o.bezeichnung || '–') + (m && m.whg ? ' · ' + esc(m.whg) : '') + '</td>' +
-          '<td><b>' + esc(x.titel) + '</b>' + (x.fotos.length ? ' <small class="muted">📷' + x.fotos.length + '</small>' : '') + '</td><td>' + H.chip(DR[x.dringlichkeit], 'dr-' + x.dringlichkeit) + '</td>' +
-          '<td>' + H.chip(ST[x.status], 'is-' + x.status) + '</td><td>' + esc(hw ? hw.firma : '–') + '</td><td class="r">' + (x.rechnung && x.rechnung.betrag ? fmtEUR(x.rechnung.betrag) : x.auftragssumme ? '<span class="muted">' + fmtEUR(x.auftragssumme) + '</span>' : '') + '</td>' +
+        const m = H.mieter(x.mieterId); const hw = H.kontakt(x.handwerkerId);
+        const zusatz = x.objektText && H.objekt(x.objektId) && C.normName(x.objektText) !== C.normName(objektName(x)) ? x.objektText : '';
+        return '<tr class="klick" data-act="openFall" data-b="ih" data-id="' + x.id + '"><td>' + esc(objektName(x)) + (!x.objektId ? ' <small class="muted" title="keinem Objekt zugeordnet">?</small>' : '') +
+          (zusatz ? '<br><small class="muted">' + esc(zusatz) + '</small>' : '') + (m && m.whg ? '<br><small class="muted">' + esc(C.mieterName(m)) + ' · ' + esc(m.whg) + '</small>' : '') + '</td>' +
+          '<td><b>' + esc(x.titel) + '</b>' + (x.fotos.length ? ' <small class="muted">📷' + x.fotos.length + '</small>' : '') + (x.naechsterSchritt ? '<br><small>→ ' + esc(x.naechsterSchritt) + '</small>' : '') +
+          (hw ? '<br><small class="muted">' + esc(hw.firma) + '</small>' : '') + '</td><td>' + esc(x.sb || '') + '</td>' +
+          '<td>' + (x.prio ? H.chip(x.prio, PRIO_CLS[x.prio] || '') : x.dringlichkeit !== 'normal' ? H.chip(DR[x.dringlichkeit], 'dr-' + x.dringlichkeit) : '') + '</td>' +
+          '<td>' + H.chip(ST[x.status], 'is-' + x.status) + '</td><td class="nw small">' + fmtDatum(x.termin) + (x.terminText && !x.termin ? esc(x.terminText.slice(0, 25)) : '') + '</td>' +
           '<td>' + H.wvChip(H.naechsteWV('ih', x.id)) + '</td></tr>';
       }).join('') + '</tbody></table>';
   }
   function gefiltert() {
     const f = App.f.ih, q = f.q.toLowerCase();
-    return App.data.ih.filter(x => (!f.objekt || x.objektId === f.objekt) &&
-      (f.status === '' || (f.status === 'aktiv' ? !['abgerechnet'].includes(x.status) : x.status === f.status)) &&
-      (!q || (x.titel + ' ' + x.beschreibung + ' ' + H.fallLabel('ih', x)).toLowerCase().includes(q)))
-      .sort((a, b) => ({ notfall: 0, hoch: 1, normal: 2 }[a.dringlichkeit] - { notfall: 0, hoch: 1, normal: 2 }[b.dringlichkeit]) || (b.gemeldetAm || '').localeCompare(a.gemeldetAm || ''));
+    const prioRang = x => ({ 'A+': 0, AAA: 0, AA: 1, A: 2, B: 3, C: 4 }[x.prio] ?? ({ notfall: 0, hoch: 1, normal: 5 }[x.dringlichkeit]));
+    return App.data.ih.filter(x => (!f.objekt || (f.objekt === '_ohne' ? !x.objektId : x.objektId === f.objekt)) && (!f.sb || (x.sb || '') === f.sb) &&
+      (f.status === '' || (f.status === 'aktiv' ? aktiv(x) : x.status === f.status)) &&
+      (!q || [x.titel, x.beschreibung, x.naechsterSchritt, x.material, x.besonderheiten, x.objektText, H.fallLabel('ih', x)].join(' ').toLowerCase().includes(q)))
+      .sort((a, b) => ((H.naechsteWV('ih', a.id) || {}).datum || '9999').localeCompare((H.naechsteWV('ih', b.id) || {}).datum || '9999') || prioRang(a) - prioRang(b));
   }
 
   App.views.ih = {
     render() {
       const f = App.f.ih; const list = gefiltert();
       return '<section class="card"><div class="toolbar"><h2>Instandhaltung</h2><input type="search" id="ihQ" data-filter="ih.q" placeholder="Suchen …" value="' + esc(f.q) + '">' +
-        '<select data-filter="ih.objekt"><option value="">alle Objekte</option>' + H.objektOptionen(false).map(([v, l]) => '<option value="' + v + '"' + (f.objekt === v ? ' selected' : '') + '>' + esc(l) + '</option>').join('') + '</select>' +
+        '<select data-filter="ih.objekt"><option value="">alle Objekte</option><option value="_ohne"' + (f.objekt === '_ohne' ? ' selected' : '') + '>– ohne Objekt –</option>' + H.objektOptionen(false).filter(([v]) => App.data.ih.some(x => x.objektId === v)).map(([v, l]) => '<option value="' + v + '"' + (f.objekt === v ? ' selected' : '') + '>' + esc(l) + '</option>').join('') + '</select>' +
+        '<select data-filter="ih.sb"><option value="">alle SB</option>' + Array.from(new Set(App.data.ih.map(x => x.sb).filter(Boolean))).sort().map(v => '<option' + (f.sb === v ? ' selected' : '') + '>' + esc(v) + '</option>').join('') + '</select>' +
         '<select data-filter="ih.status"><option value="aktiv"' + (f.status === 'aktiv' ? ' selected' : '') + '>aktive</option><option value=""' + (f.status === '' ? ' selected' : '') + '>alle</option>' +
         REIHE.map(s => '<option value="' + s + '"' + (f.status === s ? ' selected' : '') + '>' + ST[s] + '</option>').join('') + '</select>' +
-        '<span class="sp"></span><button data-act="ihExcel">Liste Excel</button><button data-act="ihPng">Liste PNG</button><button class="primary" data-act="ihNeu">+ Schaden aufnehmen</button></div>' +
-        (list.length ? tabelle(list) : H.leer('Keine Instandhaltungsfälle für diesen Filter.')) + '</section>';
+        '<span class="muted">' + list.length + ' Aufgaben</span><span class="sp"></span>' + (App.data.meta.ihListeStand ? '<small class="muted">Liste eingelesen ' + fmtDatum(App.data.meta.ihListeStand) + '</small>' : '') +
+        '<button data-act="ihListeImport">⇪ Instandhaltungsliste einlesen</button><button data-act="ihExcel">Liste Excel</button><button data-act="ihPng">PNG</button><button class="primary" data-act="ihNeu">+ Aufgabe / Schaden</button></div>' +
+        (list.length ? tabelle(list) : H.leer('Keine Aufgaben für diesen Filter. Die bestehende Excel-Liste lässt sich über „⇪ Instandhaltungsliste einlesen“ übernehmen.')) + '</section>';
     },
     detail(id) {
       const x = H.fall('ih', id); if (!x) { App.detail = null; return App.views.ih.render(); }
@@ -3489,11 +3650,17 @@ Mit freundlichen Grüßen
       const b = (act, label, cls = '') => '<button class="' + cls + '" data-act="' + act + '" data-id="' + id + '">' + label + '</button>';
       const next = { gemeldet: 'ihAnfrage', angefragt: 'ihBeauftragen', beauftragt: 'ihInArbeit', in_arbeit: 'ihErledigt', erledigt: 'ihRechnung' }[x.status];
       const cls = a => (a === next ? 'primary' : '');
-      return '<div class="detailkopf"><button data-act="back">← Liste</button><h2>' + esc(x.titel) + '</h2>' + H.chip(DR[x.dringlichkeit], 'dr-' + x.dringlichkeit) +
-        '<span class="muted">' + esc(o.bezeichnung || '') + (m ? ' · ' + esc(C.mieterName(m)) + (m.whg ? ' (' + esc(m.whg) + ')' : '') : '') + '</span><span class="sp"></span>' +
+      return '<div class="detailkopf"><button data-act="back">← Liste</button><h2>' + esc(x.titel) + '</h2>' + (x.prio ? H.chip('Prio ' + x.prio, PRIO_CLS[x.prio] || '') : '') + H.chip(DR[x.dringlichkeit], 'dr-' + x.dringlichkeit) +
+        '<span class="muted">' + esc(o.bezeichnung || x.objektText || '') + (m ? ' · ' + esc(C.mieterName(m)) + (m.whg ? ' (' + esc(m.whg) + ')' : '') : '') + '</span><span class="sp"></span>' +
         '<button class="s" data-act="ihEdit" data-id="' + id + '">Bearbeiten</button><button class="s del" data-act="ihDel" data-id="' + id + '">Löschen</button></div>' +
         '<div class="pipeline">' + REIHE.map((s, i) => '<span class="' + (i < idx ? 'done' : i === idx ? 'on' : '') + '">' + ST[s] + '</span>').join('') + '</div>' +
-        '<div class="cols3"><section class="card"><h3>Schaden</h3><p class="pre">' + esc(x.beschreibung || '–') + '</p><dl class="kv">' +
+        (x.naechsterSchritt || x.material || x.besonderheiten || x.sb ? '<section class="card naechster"><dl class="kv">' +
+          (x.naechsterSchritt ? '<dt>nächster Schritt</dt><dd><b>' + esc(x.naechsterSchritt) + '</b></dd>' : '') + (x.sb ? '<dt>SB</dt><dd>' + esc(x.sb) + '</dd>' : '') +
+          (x.material ? '<dt>Material / Info</dt><dd class="pre">' + esc(x.material) + '</dd>' : '') + (x.besonderheiten ? '<dt>Besonderheiten</dt><dd class="pre">' + esc(x.besonderheiten) + '</dd>' : '') +
+          (x.mieterInfo ? '<dt>Mieter / Info</dt><dd>' + esc(x.mieterInfo) + '</dd>' : '') + (x.terminText ? '<dt>Termin (Liste)</dt><dd>' + esc(x.terminText) + '</dd>' : '') +
+          (x.wvText ? '<dt>WV-Notiz (Liste)</dt><dd>' + esc(x.wvText) + '</dd>' : '') + (x.quelle === 'ih-liste' ? '<dt>Quelle</dt><dd class="muted">Instandhaltungsliste, Zeile ' + esc(x.listenZeile || '') + ' – Änderungen dort werden beim nächsten Einlesen übernommen</dd>' : '') +
+          '</dl><button class="s" data-act="ihSchritt" data-id="' + id + '">nächsten Schritt ändern</button></section>' : '') +
+        '<div class="cols3"><section class="card"><h3>Aufgabe</h3><p class="pre">' + esc(x.beschreibung || '–') + '</p><dl class="kv">' +
         '<dt>gemeldet</dt><dd>' + fmtDatum(x.gemeldetAm) + '</dd><dt>Gewerk</dt><dd>' + esc(x.gewerk || '–') + '</dd><dt>Verursacher</dt><dd>' + VERURSACHER[x.verursacher || 'unklar'] + '</dd>' +
         '<dt>Handwerker</dt><dd>' + esc(hw ? hw.firma : '–') + '</dd><dt>Auftrag am</dt><dd>' + fmtDatum(x.auftragAm) + '</dd><dt>Termin</dt><dd>' + fmtDatum(x.termin) + (x.terminZeit ? ' ' + esc(x.terminZeit) : '') + '</dd>' +
         '<dt>Rechnung</dt><dd>' + (x.rechnung && x.rechnung.betrag ? fmtEUR(x.rechnung.betrag) + ' (Nr. ' + esc(x.rechnung.nr || '–') + ', ' + fmtDatum(x.rechnung.datum) + ')' : '–') + '</dd></dl></section>' +
@@ -3532,14 +3699,21 @@ Mit freundlichen Grüßen
     App.commit();
   }
   function ihFelder() {
+    const sbs = Array.from(new Set(App.data.ih.map(x => x.sb).filter(Boolean)));
     return [
-      { k: 'objektId', l: 'Objekt', t: 'select', o: H.objektOptionen(), req: true }, { k: 'mieterId', l: 'Mieter / Wohnung (optional)', t: 'select', o: [['', '– Gemeinschaftseigentum / keiner –'], ...H.mieterOptionen(false)] },
+      { k: 'objektId', l: 'Objekt', t: 'select', o: [['', '– ohne / nicht zugeordnet –'], ...H.objektOptionen(false)] }, { k: 'objektText', l: 'Ort / Lage (Freitext)', ph: 'z. B. Haus 10, Hausflur' },
+      { k: 'mieterId', l: 'Mieter / Wohnung (optional)', t: 'select', o: [['', '– Gemeinschaftseigentum / keiner –'], ...H.mieterOptionen(false)] },
+      { k: 'sb', l: 'SB (zuständig)', list: 'dl_sb' },
       { k: 'titel', l: 'Kurzbeschreibung', req: true, full: true, ph: 'z. B. Wasserschaden Bad, Heizung ausgefallen' },
-      { k: 'beschreibung', l: 'Beschreibung', t: 'textarea', full: true, rows: 4 },
-      { k: 'gemeldetAm', l: 'gemeldet am', t: 'date', req: true }, { k: 'dringlichkeit', l: 'Dringlichkeit', t: 'select', o: Object.entries(DR) },
-      { k: 'gewerk', l: 'Gewerk', t: 'select', o: [['', '–'], ...App.GEWERKE.map(g => [g, g])] }, { k: 'verursacher', l: 'Verursacher', t: 'select', o: Object.entries(VERURSACHER) }
+      { k: 'beschreibung', l: 'Aufgabe / Beschreibung', t: 'textarea', full: true, rows: 3 },
+      { k: 'naechsterSchritt', l: 'nächster Schritt', full: true }, { k: 'material', l: 'benötigtes Material / Info', t: 'textarea', rows: 2 }, { k: 'besonderheiten', l: 'Besonderheiten', t: 'textarea', rows: 2 },
+      { k: 'gemeldetAm', l: 'gemeldet am', t: 'date', req: true }, { k: 'termin', l: 'Termin', t: 'date' },
+      { k: 'prio', l: 'Priorität', t: 'select', o: [['', '–'], ['A+', 'A+'], ['AAA', 'AAA'], ['AA', 'AA'], ['A', 'A'], ['B', 'B'], ['C', 'C']] }, { k: 'dringlichkeit', l: 'Dringlichkeit (WV-Regel)', t: 'select', o: Object.entries(DR) },
+      { k: 'gewerk', l: 'Gewerk', t: 'select', o: [['', '–'], ...App.GEWERKE.map(g => [g, g])] }, { k: 'verursacher', l: 'Verursacher', t: 'select', o: Object.entries(VERURSACHER) },
+      { k: 'html', t: 'html', html: '<datalist id="dl_sb">' + sbs.map(v => '<option value="' + esc(v) + '">').join('') + '</datalist>' }
     ];
   }
+
 
   Object.assign(App.change, {
     ihFotoAdd(el) { fotosHinzu(H.fall('ih', el.dataset.id), Array.from(el.files)); }
@@ -3547,12 +3721,11 @@ Mit freundlichen Grüßen
 
   Object.assign(App.act, {
     async ihNeu() {
-      if (!App.data.objekte.length) return App.toast('Bitte zuerst unter „Objekte & Mieter“ ein Objekt anlegen.', 'warn');
       const v = await App.formModal('Schaden aufnehmen', [...ihFelder(), { k: 'fotos', l: 'Fotos', t: 'file', multiple: true, accept: 'image/*', full: true, hint: 'werden verkleinert gespeichert' }],
-        { gemeldetAm: C.today(), dringlichkeit: 'normal', verursacher: 'unklar', objektId: App.f.ih.objekt }, { wide: true, ok: 'Aufnehmen' });
+        { gemeldetAm: C.today(), dringlichkeit: 'normal', verursacher: 'unklar', objektId: App.f.ih.objekt === '_ohne' ? '' : App.f.ih.objekt }, { wide: true, ok: 'Aufnehmen' });
       if (!v) return;
       if (v.mieterId && !v.objektId) v.objektId = (H.mieter(v.mieterId) || {}).objektId;
-      const files = v.fotos; delete v.fotos; delete v._action;
+      const files = v.fotos; delete v.fotos; delete v._action; delete v.html;
       const f = Object.assign({ id: C.uid(), status: 'gemeldet', angebote: [], anfragen: [], fotos: [] }, v);
       App.data.ih.push(f);
       C.applyAction(App.data, 'ih', f.id, 'gemeldet', { heute: C.today(), dringlichkeit: f.dringlichkeit, verlaufText: 'Schaden gemeldet (' + DR[f.dringlichkeit] + ')' });
@@ -3562,7 +3735,49 @@ Mit freundlichen Grüßen
     async ihEdit(ds) {
       const f = H.fall('ih', ds.id);
       const v = await App.formModal('Schaden bearbeiten', ihFelder(), f, { wide: true });
-      if (!v) return; delete v._action; Object.assign(f, v); App.commit();
+      if (!v) return; delete v._action; delete v.html; Object.assign(f, v); App.commit();
+    },
+    async ihSchritt(ds) {
+      const f = H.fall('ih', ds.id);
+      const v = await App.formModal('Nächster Schritt', [{ k: 'naechsterSchritt', l: 'nächster Schritt', full: true },
+        { k: 'wv', l: 'WV am (optional)', t: 'date' }], { naechsterSchritt: f.naechsterSchritt || '' }, { ok: 'Speichern' });
+      if (!v) return;
+      if (v.naechsterSchritt !== (f.naechsterSchritt || '')) C.addVerlauf(App.data, 'ih', f.id, 'schritt', 'Nächster Schritt: ' + (v.naechsterSchritt || '–'));
+      f.naechsterSchritt = v.naechsterSchritt;
+      if (v.wv) C.createWV(App.data, 'ih', f.id, v.wv, v.naechsterSchritt || f.titel, { erstelltDurch: 'manuell' });
+      App.commit();
+    },
+    async ihListeImport() {
+      const v = await App.formModal('Instandhaltungsliste einlesen', [{ k: 'datei', l: 'Excel-Datei (TO-DO-Liste)', t: 'file', accept: '.xlsx,.xlsm,.xls,.ods', full: true },
+        { k: 'stand', l: 'Stand (für WV-Daten ohne Jahr)', t: 'date', d: C.today(), req: true }], {},
+        { ok: 'Weiter', intro: '<p class="muted">Liest jede <b>sichtbare</b> Zeile mit Objekt und Aufgabe – <b>ausgeblendete Zeilen werden ignoriert</b>. Spalten: Objekt · SB · Aufgabe · benötigtes Material · Termin · Mieter/Prio · nächster Schritt · WV · Besonderheiten. ' +
+          'WV und Termine werden Wiedervorlagen. Erneut einlesen gleicht ab: Änderungen landen im Verlauf, Aufgaben die nicht mehr sichtbar sind gelten als erledigt.</p>' });
+      if (!v || !v.datei[0]) return;
+      let blaetter;
+      try { blaetter = await D.leseArbeitsmappe(v.datei[0]); } catch (e) { return App.toast('Datei konnte nicht gelesen werden: ' + e.message, 'err', 9000); }
+      blaetter = blaetter.map(b => Object.assign(b, { aufgaben: C.parseIhListe(b.rows, v.stand, b.zeilen) })).filter(b => b.aufgaben.length);
+      if (!blaetter.length) return App.toast('Keine Aufgaben gefunden – es braucht eine Kopfzeile mit „Objekt“ und „Aufgabe“.', 'err', 9000);
+      let blatt = blaetter[0];
+      if (blaetter.length > 1) {
+        const w = await App.formModal('Blatt auswählen', [{ k: 'b', l: 'Tabellenblatt', t: 'select', full: true, o: blaetter.map((b, i) => [String(i), b.name.trim() + ' – ' + b.aufgaben.length + ' Aufgaben' + (b.ausgeblendet ? ' (' + b.ausgeblendet + ' Zeilen ausgeblendet)' : '')]) }], { b: '0' }, { ok: 'Weiter' });
+        if (!w) return; blatt = blaetter[+w.b];
+      }
+      const A = blatt.aufgaben;
+      const ohneObj = A.filter(e => !C.objektFinden(App.data, e.objektText)).length;
+      const bekannt = A.filter(e => App.data.ih.some(x => x.listenKey === e.key)).length;
+      const vorschau = '<div class="scrollx"><table class="tbl small"><thead><tr><th>Zeile</th><th>Objekt</th><th>SB</th><th>Aufgabe</th><th>nächster Schritt</th><th>Termin</th><th>WV</th></tr></thead><tbody>' +
+        A.slice(0, 8).map(e => '<tr><td>' + e.zeile + '</td><td>' + esc(e.objektText) + '</td><td>' + esc(e.sb) + '</td><td>' + esc(e.titel) + '</td><td>' + esc(e.schritt) + '</td><td>' + fmtDatum(e.termin.datum) + '</td><td>' + fmtDatum(e.wv) + (e.wvText ? ' ' + esc(e.wvText) : '') + '</td></tr>').join('') + '</tbody></table></div>';
+      const w = await App.formModal('Instandhaltungsliste einlesen – ' + blatt.name.trim(), [
+        { k: 'fehlendeErledigen', l: 'Aufgaben aus früheren Einlesungen, die nicht mehr sichtbar in der Liste stehen, als erledigt markieren', t: 'checkbox', d: true, full: true }
+      ], {}, { wide: true, ok: 'Einlesen', intro: '<p><b>' + A.length + '</b> Aufgaben aus sichtbaren Zeilen' + (blatt.ausgeblendet ? ', <b>' + blatt.ausgeblendet + '</b> ausgeblendete Zeilen ignoriert' : '') + '. ' +
+        A.filter(e => e.wv || e.wvText).length + ' mit WV, ' + A.filter(e => e.termin.datum).length + ' mit Termin' + (bekannt ? ', ' + bekannt + ' bereits bekannt (werden abgeglichen)' : '') + '.</p>' +
+        (ohneObj ? '<p class="small muted">' + ohneObj + ' Aufgaben lassen sich keinem Objekt zuordnen (z. B. Abkürzungen wie „BR51“) – sie werden mit dem Text aus der Liste angelegt und können später zugeordnet werden. Tipp: Telefonliste vorher einlesen, dann sind alle Objekte bekannt.</p>' : '') + vorschau });
+      if (!w) return;
+      const st = C.importIhListe(App.data, A, { stand: v.stand, blatt: blatt.name.trim(), fehlendeErledigen: w.fehlendeErledigen });
+      App.tab = 'ih'; App.detail = null; App.commit();
+      App.modal({ title: 'Instandhaltungsliste eingelesen', body: '<ul><li><b>' + st.neu + '</b> neue Aufgaben, ' + st.geaendert + ' geändert, ' + st.unveraendert + ' unverändert</li>' +
+        (st.erledigt ? '<li>' + st.erledigt + ' nicht mehr sichtbar → erledigt</li>' : '') + (st.wiedereroeffnet ? '<li>' + st.wiedereroeffnet + ' wieder geöffnet</li>' : '') +
+        '<li>' + st.wvNeu + ' Wiedervorlagen angelegt (WV und Termine aus der Liste)</li>' + (st.ohneObjekt ? '<li>' + st.ohneObjekt + ' ohne Objekt-Zuordnung – Filter „ohne Objekt“</li>' : '') + '</ul>' });
     },
     async ihDel(ds) {
       if (!await App.confirm('Instandhaltungsfall inkl. Fotos, WV und Verlauf löschen?', 'Löschen', 'Abbrechen')) return;
@@ -3680,16 +3895,13 @@ Mit freundlichen Grüßen
       C.applyAction(App.data, 'ih', f.id, 'abgerechnet', {}); App.commit();
     },
     async ihExcel() {
-      const blaetter = {};
-      App.data.ih.forEach(x => {
-        const o = H.objekt(x.objektId) || { bezeichnung: 'ohne Objekt' }; const m = H.mieter(x.mieterId); const hw = H.kontakt(x.handwerkerId);
-        (blaetter[o.bezeichnung] = blaetter[o.bezeichnung] || []).push([fmtDatum(x.gemeldetAm), m ? m.whg || C.mieterName(m) : 'Gemeinschaft', x.titel, x.beschreibung || '', DR[x.dringlichkeit], ST[x.status],
-          x.gewerk || '', hw ? hw.firma : '', fmtDatum(x.termin), x.auftragssumme || '', (x.rechnung || {}).betrag || '', VERURSACHER[x.verursacher || 'unklar']]);
-      });
-      const kopf = ['gemeldet', 'Wohnung', 'Schaden', 'Beschreibung', 'Dringlichkeit', 'Status', 'Gewerk', 'Handwerker', 'Termin', 'Auftrag €', 'Rechnung €', 'Verursacher'];
-      const l = Object.keys(blaetter).sort().map(n => ({ name: n.replace(/[\\/?*[\]:]/g, ' '), kopf, zeilen: blaetter[n] }));
+      const l = gefiltert();
       if (!l.length) return App.toast('Keine Daten.', 'warn');
-      await D.excel('Instandhaltungsliste ' + C.today(), l);
+      const zeilen = l.map(x => { const wv = H.naechsteWV('ih', x.id); const hw = H.kontakt(x.handwerkerId);
+        return [objektName(x) + (x.objektText && x.objektId && C.normName(x.objektText) !== C.normName(objektName(x)) ? ' – ' + x.objektText : ''), x.sb || '', x.beschreibung || x.titel, x.material || '',
+          x.termin ? fmtDatum(x.termin) : x.terminText || '', x.prio || '', x.naechsterSchritt || '', wv ? fmtDatum(wv.datum) : '', x.besonderheiten || '', ST[x.status], hw ? hw.firma : ''];
+      });
+      await D.excel('Instandhaltungsliste ' + C.today(), [{ name: 'aktuelle TO DO Liste', kopf: ['Objekt', 'SB', 'Aufgabe', 'benötigtes Material', 'Termin', 'Prio', 'nächster Schritt', 'WV', 'Besonderheiten', 'Status', 'Handwerker'], zeilen }]);
     },
     async ihPng() {
       const el = document.getElementById('ihTabelle'); if (!el) return App.toast('Keine Liste sichtbar.', 'warn');
