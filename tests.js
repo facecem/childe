@@ -214,6 +214,37 @@ sT = C.importTelefonliste(d, tl, { heute: '2026-10-28' });
 eq([sT.geaendert, sT.entfernt, d.mieter[0].email], [1, 1, 'neu@example.org'], 'Folgemonat: Änderung erkannt, fehlender Eintrag markiert, E-Mail aktualisiert');
 eq(C.emailsZuMieter(d, { importName: 'PROBE, PAUL' }), 'neu@example.org', 'E-Mail-Suche über Adressbuch');
 
+section('OPOS-Liste (PDF)');
+const O = (x, y, s, w) => ({ x, y, s, w: w || s.length * 4.5 });
+const op1 = [O(38, 578, 'Offene Postenliste (OPOS F‰lligkeit zum : 30.09.26)'), O(40, 565, 'Objekt-Nr. 19400 BEISPIELSTRA', 190), O(230, 565, 'flE 1, 52062, Aachen'), O(430, 565, 'Auswertung zum 30.09.2026'),
+  O(42, 546, 'Debitor'), O(87, 546, '700100 PROBE, PAUL'), O(297, 546, 'Whg.'), O(357, 546, '8'), O(369, 546, 'PFkt.'), O(415, 546, '007 Mieter'), O(666, 546, '01.12.25 -'),
+  O(297, 530, 'Lage'), O(327, 529, 'EG links'),
+  O(64, 468, '03.08.26'), O(141, 468, '9'), O(153, 468, '820'), O(187, 468, 'Grundmiete 08/26 |PROBE'), O(424, 468, '800,00'), O(573, 468, '03.08.26'), O(624, 468, '58'),
+  O(46, 455, '1'), O(64, 455, '14.08.26'), O(132, 455, '507'), O(153, 455, '820'), O(187, 455, 'Mahnl.08/26 AA 802-999/Mahngeb'), O(433, 455, '5,00'), O(573, 455, '16.08.26'), O(624, 455, '45'),
+  O(64, 443, '02.09.26'), O(137, 443, '19'), O(153, 443, '822'), O(187, 443, 'Diff. Garagen-Erl', 76), O(263, 443, 'ˆse'), O(424, 443, '60,00'), O(573, 443, '01.09.26'), O(628, 443, '29'),
+  O(76, 20, 'Druckdatum :'), O(132, 20, '11.09.2026')];
+const op2 = [O(38, 578, 'Offene Postenliste'), O(40, 565, 'Objekt-Nr. 19400 BEISPIELSTRA', 190), O(230, 565, 'flE 1, 52062, Aachen'),
+  O(42, 546, 'Debitor'), O(87, 546, '700100 PROBE, PAUL'), O(297, 546, 'Whg.'), O(357, 546, '8'), O(369, 546, 'PFkt.'), O(415, 546, '007 Mieter'), O(666, 546, '01.12.25 -'),
+  O(64, 480, '05.09.26'), O(141, 480, '5'), O(153, 480, '820'), O(187, 480, 'Zahlung'), O(501, 480, '300,00'), O(573, 480, '05.09.26'),
+  O(310, 351, 'Summe PKto:'), O(429, 350, '865,00'), O(496, 350, '300,00'), O(568, 350, '565,00 S'), O(692, 350, '5,00'), O(746, 350, '565,00 S')];
+const opl = C.parseOposPdf([op1, op2]);
+eq([opl.stand, opl.druck, opl.konten.length], ['2026-09-30', '2026-09-11', 1], 'OPOS-PDF: Stand, Druckdatum, Konto über Seitenumbruch');
+const kk = opl.konten[0];
+eq([kk.objektNr, kk.objektStrasse, kk.objektPlzOrt, kk.debitor, kk.name, kk.whg, kk.lage, kk.von], ['19400', 'BEISPIELSTRAßE 1', '52062 Aachen', '700100', 'PROBE, PAUL', '8', 'EG links', '2025-12-01'], 'Kopf, Debitor, Umlaute/ß repariert');
+eq(kk.posten.map(p => [p.text, p.typ, p.betrag, p.faellig, p.mst]), [['Grundmiete 08/26', 'miete', 800, '2026-08-03', 0], ['Mahnl.08/26 AA 802-999/Mahngeb', 'sonstig', 5, '2026-08-16', 1], ['Diff. Garagen-Erlöse', 'miete', 60, '2026-09-01', 0], ['Zahlung', 'gutschrift', -300, '2026-09-05', 0]], 'Posten mit Typ, Betrag, Mahnstufe');
+eq([kk.saldo, kk.summe.saldo, kk.kontrolle], [565, 565, true], 'Kontrolle gegen „Summe PKto“');
+eq(C.nettoPosten(kk.posten.map(p => ({ ...p, offen: p.betrag, bez: p.text }))).map(p => [p.bez, p.offen]), [['Grundmiete 08/26', 500], ['Mahnl.08/26 AA 802-999/Mahngeb', 5], ['Diff. Garagen-Erlöse', 60]], 'Gutschrift mit ältesten Posten verrechnet');
+d = C.emptyData(); let sO;
+d.mieter.push({ id: 'mx', importName: 'PROBE, PAUL', nachname: 'Probe', vorname: 'Paul', mietbeginn: '2025-12-01', objektId: '' });
+d.opos.push({ id: 'fx', mieterId: 'mx', stufe: 'mahnung1', posten: [{ id: 's', saldo: true, saldoListe: 900, offen: 900, betrag: 900, bez: 'Saldo' }, { id: 'man', bez: 'Schlüssel', offen: 20, betrag: 20, typ: 'sonstig' }], raten: [] });
+sO = C.importOposPdf(d, opl, { heute: '2026-09-28' });
+eq([sO.faelleNeu, sO.aktualisiert, sO.posten, d.mieter[0].mietnr, d.objekte[0].nr], [0, 1, 4, '700100', '19400'], 'Import: bestehender Fall, Debitor-Nr übernommen, Objekt angelegt');
+eq([d.opos[0].posten.length, C.offenSumme(d.opos[0].posten)], [5, 585], 'Saldo-Posten ersetzt, manueller Posten bleibt');
+sO = C.importOposPdf(d, opl, { heute: '2026-10-28' });
+eq([sO.aktualisiert, sO.unveraendert, d.opos[0].posten.length], [0, 1, 5], 'erneutes Einlesen: keine Doppelungen');
+eq(C.monateText(d.opos[0].posten), 'August und September 2026', 'Mietmonate nach Verrechnung');
+eq([d.mieter[0].gesamtmiete, d.mieter[0].mieteGeschaetzt], [800, true], 'Monatsmiete aus vollen Mietposten geschätzt (ohne „Diff.“)');
+
 section('Vorlagen');
 const html = C.vorlageZuHTML('Hallo {{m.name}},\n\n{{postenTabelle}}\n\nSumme **{{s}}** <x>\nZeile {{fehlt}}', { m: { name: 'A & B' }, postenTabelle: '<table>\n<tr><td>1</td></tr></table>', s: '1,00 €' });
 eq(html, '<p>Hallo A &amp; B,</p>\n<table><tr><td>1</td></tr></table>\n<p>Summe <b>1,00 €</b> &lt;x&gt;<br>Zeile <mark>{{fehlt}}</mark></p>', 'vorlageZuHTML');

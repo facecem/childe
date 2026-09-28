@@ -174,7 +174,11 @@ Mit freundlichen Grüßen
       betreff: 'Zahlungserinnerung – Miete {{monate}} – {{objekt.strasse}}{{mieter.whgKomma}}',
       text: `Sehr geehrte Damen und Herren,
 
-nach Prüfung unserer Zahlungseingänge haben wir festgestellt, dass die Miete für {{fuerMonat}} {{monate}} in Höhe von {{betrag}} bislang nicht beglichen wurde.
+nach Prüfung unserer Zahlungseingänge haben wir festgestellt, dass folgende Beträge aus Ihrem Mietkonto bislang nicht beglichen wurden:
+
+{{postenListe}}
+
+Offener Gesamtbetrag: {{betrag}}
 
 Wir bitten Sie höflich, den ausstehenden Betrag spätestens bis zum {{frist}} zu überweisen, um weitere Schritte zu vermeiden.
 {{abmahnungAbsatz}}
@@ -356,7 +360,7 @@ Mit freundlichen Grüßen
     ['objekt.eigentuemer', ''], ['firma.firma', ''], ['firma.tel', ''], ['firma.mail', ''], ['sachbearbeiter', ''],
     ['summe', 'offene Mietposten+Sonstige'], ['summeGesamt', 'inkl. Mahngebühr'], ['summeMiete', 'nur Mietposten'], ['postenTabelle', 'Tabelle offene Posten'],
     ['mahngebuehrSatz', 'Satz zur Mahngebühr (leer bei 0)'], ['kuendigungsgrund', 'aus Kündigungscheck'], ['ordentlichZum', '§ 573c-Termin'],
-    ['abmahnungDetails', 'Freitext'], ['monate', 'offene Mietmonate (E-Mail-Mahnung)'], ['fuerMonat', '„den Monat“ / „die Monate“'], ['betrag', 'Betrag (E-Mail-Mahnung)'], ['abmahnungAbsatz', 'Abmahnungs-Absatz oder leer'], ['ratenTabelle', ''], ['ratenSumme', ''], ['ratenVerzugTage', ''],
+    ['abmahnungDetails', 'Freitext'], ['postenListe', 'Aufstellung der offenen Posten (E-Mail-Mahnung)'], ['monate', 'offene Mietmonate (E-Mail-Mahnung)'], ['fuerMonat', '„den Monat“ / „die Monate“'], ['betrag', 'Betrag (E-Mail-Mahnung)'], ['abmahnungAbsatz', 'Abmahnungs-Absatz oder leer'], ['ratenTabelle', ''], ['ratenSumme', ''], ['ratenVerzugTage', ''],
     ['schaden.titel', ''], ['schaden.beschreibung', ''], ['schaden.gemeldetAm', ''], ['schaden.dringlichkeitText', ''], ['handwerker.firma', ''],
     ['terminText', ''], ['angebotText', ''], ['rechnung.nr', ''], ['rechnung.datum', ''], ['weiterbelastungBetrag', ''],
     ['kaution.betrag', ''], ['kaution.auszahlung', ''], ['kaution.uebergabeAm', ''], ['kaution.auszahlungIban', ''], ['kautionTabelle', ''],
@@ -376,7 +380,7 @@ Mit freundlichen Grüßen
       (fuss ? '<tfoot><tr>' + fuss.map((v, i) => td(v === '' ? '' : '<b>' + esc(v) + '</b>', i)).join('') + '</tr></tfoot>' : '') + '</table>';
   }
   function postenTabelle(posten) {
-    const offen = posten.filter(p => C.round2(p.offen) > 0).sort((a, b) => (a.faellig || '').localeCompare(b.faellig || ''));
+    const offen = posten.filter(p => C.round2(p.offen) !== 0).sort((a, b) => (a.faellig || '').localeCompare(b.faellig || ''));
     return {
       html: tabelle(['Fällig', 'Bezeichnung', 'Betrag', 'offen'], offen.map(p => [fmtDatum(p.faellig), p.bez, fmtEUR(p.betrag), fmtEUR(p.offen)]), ['', 'Summe', '', fmtEUR(C.sum(offen, p => p.offen))], [2, 3]),
       text: offen.map(p => '- ' + fmtDatum(p.faellig) + '  ' + p.bez + ': ' + fmtEUR(p.offen)).join('\n') + '\nSumme: ' + fmtEUR(C.sum(offen, p => p.offen))

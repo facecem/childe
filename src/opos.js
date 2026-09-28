@@ -16,6 +16,20 @@
   }
   function aeltesteFaelligkeit(f) { const l = f.posten.filter(p => p.offen > 0 && p.faellig).map(p => p.faellig).sort(); return l[0] || ''; }
   const mailVon = m => C.emailsZuMieter(App.data, m);
+  const TYP_LABEL = { miete: 'Miete', sonstig: 'Sonstiges', gutschrift: 'Gutschrift' };
+  /** Aufstellung: woraus sich der Saldo zusammensetzt */
+  function aufstellung(posten) {
+    const offen = (posten || []).filter(p => C.round2(p.offen) !== 0); if (!offen.length) return '';
+    const gr = {}; offen.forEach(p => {
+      const g = p.typ === 'gutschrift' || p.offen < 0 ? 'Gutschriften / Zahlungen' : p.typ === 'miete' ? (/bk|hk|nk|vorauszahl|vz/i.test(p.bez) ? 'Neben-/Heizkostenvorauszahlungen' : 'Miete (Grundmiete, Garage, Stellplatz …)')
+        : /mahn|zins/i.test(p.bez) ? 'Mahngebühren / Verzugszinsen' : /abrechn/i.test(p.bez) ? 'Betriebs-/Heizkostenabrechnungen' : 'Sonstiges';
+      (gr[g] = gr[g] || []).push(p);
+    });
+    const monate = C.monateText(posten);
+    return '<div class="aufstellung">' + Object.entries(gr).map(([g, l]) => '<div><span>' + g + ' <small class="muted">(' + l.length + ')</small></span><b class="' + (C.sum(l, p => p.offen) < 0 ? 'gruen-t' : '') + '">' + fmtEUR(C.sum(l, p => p.offen)) + '</b></div>').join('') +
+      '<div class="summe"><span>Saldo</span><b>' + fmtEUR(C.offenSumme(posten)) + '</b></div></div>' +
+      (monate ? '<p class="small muted">Offene Mietmonate (nach Verrechnung der Gutschriften): ' + esc(monate) + '</p>' : '');
+  }
   const stufeChip = st => H.chip(S[st] || st, 'st-' + st);
 
   App.views.opos = {
@@ -59,22 +73,28 @@
         '<span class="muted">' + esc(o.bezeichnung || '') + (m.whg ? ' · ' + esc(m.whg) : '') + '</span><span class="sp"></span><button class="s del" data-act="oposDel" data-id="' + id + '">Fall löschen</button></div>' +
         '<div class="cols3">' +
         '<section class="card"><h3>Mieter</h3><dl class="kv">' +
-        '<dt>Mietnr.</dt><dd>' + esc(m.mietnr || '–') + '</dd><dt>Gesamtmiete</dt><dd>' + fmtEUR(m.gesamtmiete) + '</dd><dt>Mietbeginn</dt><dd>' + fmtDatum(m.mietbeginn) + '</dd>' +
+        '<dt>Mietnr.</dt><dd>' + esc(m.mietnr || '–') + '</dd><dt>Gesamtmiete</dt><dd>' + fmtEUR(m.gesamtmiete) + (m.mieteGeschaetzt ? ' <small class="muted" title="aus Grundmiete + Vorauszahlungen der OPOS-Liste; unter „Mieter bearbeiten“ korrigierbar">(geschätzt)</small>' : '') + '</dd><dt>Mietbeginn</dt><dd>' + fmtDatum(m.mietbeginn) + '</dd>' +
         '<dt>E-Mail</dt><dd>' + esc(m.email || '–') + '</dd><dt>Telefon</dt><dd>' + esc(m.tel || '–') + '</dd><dt>Eigentümer</dt><dd>' + esc(o.eigentuemer || '–') + '</dd></dl>' +
         '<button class="s" data-act="mieterEdit" data-id="' + m.id + '">Mieter bearbeiten</button></section>' +
         '<section class="card"><h3>Stand</h3><div class="big ' + (offen > 0 ? 'rot-t' : 'gruen-t') + '">' + fmtEUR(offen) + '</div><div class="muted">offen, davon Miete ' + fmtEUR(C.offenSumme(x.posten, 'miete')) + '</div>' +
-        (x.frist ? '<p>Letzte Frist: <b>' + fmtDatum(x.frist) + '</b></p>' : '') +
+        (x.frist ? '<p>Letzte Frist: <b>' + fmtDatum(x.frist) + '</b></p>' : '') + (x.mahnstufeListe ? '<p class="small">Mahnstufe lt. OPOS-Liste: <b>' + x.mahnstufeListe + '</b></p>' : '') +
         '<div class="pruef ' + (check.moeglich ? 'rot' : '') + '"><b>Kündigungscheck § 543 Abs. 2 S. 1 Nr. 3 BGB</b><br>' + esc(check.text) + '<br><small>' + esc(check.hinweis) + ' Nur Mietposten zählen. Schonfristzahlung (§ 569 Abs. 3 Nr. 2 BGB) beachten.</small></div></section>' +
         '<section class="card"><h3>Aktionen</h3><div class="btns">' +
         '<button class="primary" data-act="oposMahnenMail" data-id="' + id + '" title="öffnet Outlook mit fertiger Mahnung">✉ Mahnen</button>' + briefBtn('erinnerung', 'Zahlungserinnerung') + briefBtn('mahnung1', '1. Mahnung') + briefBtn('mahnungLetzte', 'Letzte Mahnung') + briefBtn('kuendigung', 'Kündigung …') +
         '<button data-act="oposBrief" data-id="' + id + '" data-v="abmahnung">Abmahnung (unpünktl.)</button><button data-act="oposRaten" data-id="' + id + '">Ratenzahlung …</button>' +
         '</div><div class="btns"><button class="primary" data-act="oposZahlung" data-id="' + id + '">€ Zahlung verbuchen</button><button data-act="oposAnwalt" data-id="' + id + '">An Anwalt übergeben</button>' +
         '<button data-act="oposStufe" data-id="' + id + '">Stufe setzen</button><button data-act="oposErledigt" data-id="' + id + '">Fall erledigt</button></div></section></div>' +
-        '<section class="card"><div class="toolbar"><h3>Posten</h3><span class="sp"></span><button data-act="oposMieten" data-id="' + id + '">+ Monatsmieten</button><button data-act="postenEdit" data-id="' + id + '">+ Posten</button></div>' +
-        (posten.length ? '<table class="tbl"><thead><tr><th>Fällig</th><th>Bezeichnung</th><th>Typ</th><th class="r">Betrag</th><th class="r">offen</th><th></th></tr></thead><tbody>' +
-          posten.map(p => '<tr class="' + (p.offen <= 0 ? 'done' : '') + '"><td>' + fmtDatum(p.faellig) + '</td><td>' + esc(p.bez) + '</td><td>' + (p.typ === 'miete' ? 'Miete' : 'Sonstig') + '</td><td class="r">' + fmtEUR(p.betrag) + '</td>' +
-            '<td class="r"><b>' + fmtEUR(p.offen) + '</b></td><td class="r nw"><button class="s" data-act="postenEdit" data-id="' + id + '" data-p="' + p.id + '">Bearbeiten</button><button class="s del" data-act="postenDel" data-id="' + id + '" data-p="' + p.id + '">×</button></td></tr>').join('') +
-          '</tbody></table>' : H.leer('Noch keine Posten.')) + '</section>' +
+        '<section class="card"><div class="toolbar"><h3>Offene Posten</h3>' + (x.oposStand ? '<span class="muted">Stand OPOS-Liste ' + fmtDatum(x.oposStand) + '</span>' : '') +
+        '<span class="sp"></span><button data-act="oposMieten" data-id="' + id + '">+ Monatsmieten</button><button data-act="postenEdit" data-id="' + id + '">+ Posten</button></div>' +
+        aufstellung(x.posten) +
+        (posten.length ? '<table class="tbl"><thead><tr><th>Fällig</th><th>Buchungstext</th><th>Art</th><th>Beleg</th><th>MS</th><th class="r">überfällig</th><th class="r">Betrag</th><th class="r">offen</th><th></th></tr></thead><tbody>' +
+          posten.map(p => { const tg = p.faellig ? C.diffDays(p.faellig, C.today()) : null;
+            return '<tr class="' + (C.round2(p.offen) === 0 ? 'done' : '') + '"><td class="nw">' + fmtDatum(p.faellig) + '</td><td>' + esc(p.bez) + (p.saldo ? ' <small class="muted">(nicht aufgeschlüsselt)</small>' : '') + '</td>' +
+              '<td>' + H.chip(TYP_LABEL[p.typ] || p.typ, 'ty-' + p.typ) + '</td><td class="small muted">' + esc(p.beleg || '') + (p.aa ? ' <span title="Buchungsart">' + esc(p.aa) + '</span>' : '') + '</td>' +
+              '<td class="small">' + (p.mst ? p.mst : '') + '</td><td class="r small ' + (tg > 30 && p.offen > 0 ? 'rot-t' : 'muted') + '">' + (tg > 0 && p.offen > 0 ? tg + ' T' : '') + '</td>' +
+              '<td class="r">' + fmtEUR(p.betrag) + '</td><td class="r"><b class="' + (p.offen < 0 ? 'gruen-t' : '') + '">' + fmtEUR(p.offen) + '</b></td>' +
+              '<td class="r nw"><button class="s" data-act="postenEdit" data-id="' + id + '" data-p="' + p.id + '">Bearbeiten</button><button class="s del" data-act="postenDel" data-id="' + id + '" data-p="' + p.id + '">×</button></td></tr>'; }).join('') +
+          '</tbody><tfoot><tr><td colspan="7"><b>Saldo</b></td><td class="r"><b>' + fmtEUR(C.offenSumme(x.posten)) + '</b></td><td></td></tr></tfoot></table>' : H.leer('Noch keine Posten.')) + '</section>' +
         (x.raten && x.raten.length ? '<section class="card"><h3>Ratenplan</h3><table class="tbl"><thead><tr><th>Rate</th><th>fällig</th><th class="r">Betrag</th><th>Status</th></tr></thead><tbody>' +
           x.raten.map((r, i) => '<tr class="' + (r.bezahlt ? 'done' : r.faellig < C.today() ? 'ueber' : '') + '"><td>' + r.nr + '.</td><td>' + fmtDatum(r.faellig) + '</td><td class="r">' + fmtEUR(r.betrag) + '</td><td>' +
             '<label class="chk"><input type="checkbox" data-change="rateBezahlt" data-id="' + id + '" data-i="' + i + '"' + (r.bezahlt ? ' checked' : '') + '> bezahlt</label></td></tr>').join('') + '</tbody></table></section>' : '') +
@@ -137,7 +157,7 @@
       const m = H.mieter(f.mieterId) || {};
       const v = await App.formModal(p ? 'Posten bearbeiten' : 'Neuer Posten', [
         { k: 'bez', l: 'Bezeichnung', req: true, full: true, list: 'dl_posten' }, { k: 'faellig', l: 'Fällig am', t: 'date', req: true },
-        { k: 'typ', l: 'Typ', t: 'select', o: [['miete', 'Miete (zählt für Kündigung)'], ['sonstig', 'Sonstig (NK-Nachzahlung, Kosten …)']] },
+        { k: 'typ', l: 'Typ', t: 'select', o: [['miete', 'Miete (zählt für Kündigung)'], ['sonstig', 'Sonstig (NK-Nachzahlung, Kosten …)'], ['gutschrift', 'Gutschrift / Zahlung (Betrag negativ)']] },
         { k: 'betrag', l: 'Betrag (€)', t: 'money', req: true }, { k: 'offen', l: 'davon offen (€)', t: 'money', hint: 'leer = voller Betrag' }
       ], p || { typ: 'miete', betrag: m.gesamtmiete || '', faellig: C.today() }, {
         outro: '<datalist id="dl_posten"><option value="Miete ' + C.today().slice(5, 7) + '/' + C.today().slice(0, 4) + '"><option value="Nebenkostennachzahlung"><option value="Mahnkosten"><option value="Rücklastschriftgebühr"></datalist>'
@@ -277,12 +297,13 @@
     },
     async oposImport() {
       const v = await App.formModal('OPOS-Liste einlesen', [
-        { k: 'datei', l: 'Datei (Excel .xlsx/.xls oder CSV)', t: 'file', accept: '.xlsx,.xlsm,.xls,.ods,.csv,.txt', full: true },
+        { k: 'datei', l: 'Datei (OPOS-Liste als PDF, Excel oder CSV)', t: 'file', accept: '.pdf,.xlsx,.xlsm,.xls,.ods,.csv,.txt', full: true },
         { k: 'stand', l: 'Stand der Liste (Stichtag)', t: 'date', d: C.today(), req: true }], {},
-        { ok: 'Weiter', intro: '<p class="muted">Erkannt werden automatisch:</p><ul class="small muted"><li><b>Saldenliste</b> je Mieter (Spalten Name · Datum · Saldo, dazu WV- und Notizspalten)</li>' +
+        { ok: 'Weiter', intro: '<p class="muted">Erkannt werden automatisch:</p><ul class="small muted"><li><b>OPOS-Liste (PDF)</b> aus der Verwaltungssoftware – alle offenen Posten je Mieter (empfohlen: zeigt, woraus sich die Schulden zusammensetzen)</li><li><b>Saldenliste</b> je Mieter (Spalten Name · Datum · Saldo, dazu WV- und Notizspalten)</li>' +
           '<li><b>Rohdaten</b> aus der Verwaltungssoftware (<code>"name": "… Whg. … PFkt. … Mieter …"</code> / <code>"saldo_zeile": "Summe PKto: …"</code>)</li>' +
           '<li><b>Einzelposten</b> (Datum · Buchungstext · Betrag · Fälligkeit), z. B. für einen Mieter</li></ul><p class="small muted">Monatlich erneut einlesen: Salden werden abgeglichen, nichts wird doppelt angelegt.</p>' });
       if (!v || !v.datei[0]) return;
+      if (/\.pdf$/i.test(v.datei[0].name)) return importOposPdfDialog(v.datei[0]);
       let blaetter;
       try { blaetter = await D.leseArbeitsmappe(v.datei[0]); }
       catch (e) { return App.toast('Datei konnte nicht gelesen werden: ' + e.message + (/xlsx/i.test(e.message) ? ' – ohne Internet bitte als CSV speichern.' : ''), 'err', 9000); }
@@ -307,6 +328,36 @@
       return importPostenDialog(blatt);
     }
   });
+
+  async function importOposPdfDialog(file) {
+    App.toast('PDF wird gelesen …');
+    let liste;
+    try { liste = C.parseOposPdf(await D.lesePdfText(file)); }
+    catch (e) { return App.toast('PDF konnte nicht gelesen werden: ' + e.message + ' (für das Einlesen wird einmal Internet benötigt)', 'err', 9000); }
+    if (!liste.konten.length) return App.toast('Keine Debitoren gefunden – ist es die „Offene Postenliste“ aus der Verwaltungssoftware (mit Textebene)?', 'err', 9000);
+    const K = liste.konten, fehler = K.filter(k => k.kontrolle === false);
+    const objekte = Array.from(new Set(K.map(k => k.objektNr + ' ' + k.objektStrasse)));
+    const vorschau = '<div class="scrollx"><table class="tbl small"><thead><tr><th>Debitor</th><th>Name</th><th>Whg</th><th class="r">Posten</th><th class="r">Saldo</th><th>Kontrolle</th></tr></thead><tbody>' +
+      K.slice(0, 10).map(k => '<tr><td>' + esc(k.debitor) + '</td><td>' + esc(k.name) + '</td><td>' + esc(k.whg) + (k.lage ? ' · ' + esc(k.lage) : '') + '</td><td class="r">' + k.posten.length + '</td><td class="r">' + fmtEUR(k.saldo) + '</td><td>' +
+        (k.kontrolle ? '<span class="gruen-t">✓ = Summe PKto</span>' : '<span class="rot-t">✗ weicht ab</span>') + '</td></tr>').join('') + '</tbody></table></div>';
+    const w = await App.formModal('OPOS-Liste (PDF) einlesen', [
+      { k: 'mindestSaldo', l: 'Konten mit Saldo unter … € nicht als Fall anlegen', t: 'money', d: 0.01 },
+      { k: 'pruefWV', l: 'für jeden neuen Fall eine WV „Fall prüfen“ für heute anlegen', t: 'checkbox', d: false, full: true },
+      { k: 'fehlendeErledigen', l: 'Fälle in diesen Objekten, die nicht mehr in der Liste stehen, als erledigt markieren', t: 'checkbox', d: true, full: true }
+    ], {}, { wide: true, ok: 'Einlesen', intro: '<p><b>' + K.length + '</b> Mieterkonten mit <b>' + K.reduce((a, k) => a + k.posten.length, 0) + '</b> offenen Posten, Saldo gesamt <b>' + fmtEUR(C.sum(K.filter(k => k.saldo > 0), k => k.saldo)) + '</b>' +
+      (K.some(k => k.saldo < 0) ? ' (' + K.filter(k => k.saldo < 0).length + ' Konten mit Guthaben)' : '') + '. Auswertung zum ' + fmtDatum(liste.stand) + (liste.druck ? ', gedruckt ' + fmtDatum(liste.druck) : '') + '.</p>' +
+      '<p class="small">' + (fehler.length ? '<span class="rot-t">Bei ' + fehler.length + ' Konten weicht die Summe der Posten von „Summe PKto“ ab – bitte dort prüfen.</span>' : '<span class="gruen-t">✓ Kontrolle: bei allen Konten ergibt die Summe der Posten genau „Summe PKto“.</span>') + '</p>' +
+      '<p class="small muted">Objekte: ' + objekte.map(esc).join(' · ') + '<br>Die Posten je Fall werden durch den Stand dieser Liste ersetzt (selbst erfasste Posten bleiben). Bekannte Mieter werden über Debitor-Nr., Name und Mietbeginn erkannt.</p>' + vorschau });
+    if (!w) return;
+    const st = C.importOposPdf(App.data, liste, w);
+    App.tab = 'opos'; App.detail = null; App.commit();
+    App.modal({ title: 'OPOS-Liste eingelesen (Stand ' + fmtDatum(liste.stand) + ')', body: '<ul><li><b>' + st.konten + '</b> Konten, ' + st.posten + ' Posten übernommen</li>' +
+      '<li>' + st.faelleNeu + ' neue Fälle, ' + st.aktualisiert + ' Fälle aktualisiert, ' + st.unveraendert + ' unverändert</li>' +
+      (st.mieterNeu ? '<li>' + st.mieterNeu + ' neue Mieter' + (st.objekteNeu ? ', ' + st.objekteNeu + ' neue Objekte' : '') + '</li>' : '') +
+      (st.erledigt ? '<li>' + st.erledigt + ' Fälle ausgeglichen/Guthaben → erledigt</li>' : '') + (st.guthaben + st.uebersprungen ? '<li>' + (st.guthaben + st.uebersprungen) + ' Konten ohne offenen Betrag (Guthaben/ausgeglichen) – kein Fall nötig</li>' : '') +
+      (st.kontrolleFehler.length ? '<li class="rot-t">Summenabweichung bei: ' + st.kontrolleFehler.map(esc).join(', ') + '</li>' : '') +
+      '</ul><p class="small muted">Im Fall siehst du jetzt jeden Posten mit Buchungstext, Fälligkeit und Tagen – ✉ Mahnen listet sie in der Mail auf.</p>' });
+  }
 
   async function importSaldenDialog(blatt, stand) {
     const eintraege = blatt.format === 'json' ? C.parseJsonBlatt(blatt.rows) : C.parseSaldenBlatt(blatt.rows, blatt.kopf, stand);
@@ -381,17 +432,21 @@
   }
 
   /* ---------- Mahnen per E-Mail (Outlook) ---------- */
+  function postenZeile(p) { return fmtDatum(p.faellig) + '   ' + p.bez + '   ' + fmtEUR(p.offen); }
   function mahnMail(f, v) {
     const vl = D.vorlage(App.data, 'mail_mahnung');
     const ctx = D.kontext(App.data, { vorlageId: 'mail_mahnung', bereich: 'opos', fall: f, frist: v.frist });
-    const mehrere = /,| und /.test(v.monate);
-    Object.assign(ctx, { monate: v.monate, fuerMonat: mehrere ? 'die Monate' : 'den Monat', betrag: fmtEUR(v.betrag), frist: fmtDatum(v.frist), abmahnungAbsatz: v.abmahnung ? vl.abmahnung || '' : '' });
+    const gew = (v.sel || []).map(id => f.posten.find(p => p.id === id)).filter(Boolean).sort((a, b) => (a.faellig || '').localeCompare(b.faellig || ''));
+    const betrag = C.sum(gew, p => p.offen);
+    const monate = C.monateText(gew) || v.monate || '';
+    Object.assign(ctx, { monate, fuerMonat: /,| und /.test(monate) ? 'die Monate' : 'den Monat', betrag: fmtEUR(betrag), frist: fmtDatum(v.frist),
+      postenListe: gew.map(postenZeile).join('\n'), abmahnungAbsatz: v.abmahnung ? vl.abmahnung || '' : '' });
     const body = C.vorlageZuText(vl.text, ctx).replace(/\n{3,}/g, '\n\n').trim() + '\n\n' + (App.data.settings.email.signatur || '');
-    return { betreff: C.vorlageZuText(vl.betreff, ctx), text: body };
+    return { betreff: C.vorlageZuText(vl.betreff, ctx), text: body, betrag, monate, anzahl: gew.length };
   }
   function mailOeffnen(to, betreff, text) {
     const E = App.data.settings.email;
-    try { navigator.clipboard.writeText(text); } catch (e) { /* ohne Zwischenablage */ }
+    try { navigator.clipboard.writeText(text).catch(() => { /* Zwischenablage nicht erlaubt */ }); } catch (e) { /* ohne Zwischenablage */ }
     if (E.methode === 'eml') {
       D.download(new Blob([C.buildEML({ to, cc: E.cc, subject: betreff, text, attachments: [] })], { type: 'message/rfc822' }), C.asciiDateiname('Mahnung ' + betreff.slice(0, 60)) + '.eml');
       return 'eml';
@@ -403,24 +458,24 @@
   }
   App.act.oposMahnenMail = async function (ds) {
     const f = H.fall('opos', ds.id); const m = H.mieter(f.mieterId) || {}; const S2 = App.data.settings;
-    const mieteOffen = C.offenSumme(f.posten, 'miete');
-    const werte = {
-      to: C.emailsZuMieter(App.data, m), monate: C.monateText(f.posten) || C.monatLabel(C.today().slice(0, 7)), betrag: mieteOffen > 0 ? mieteOffen : C.offenSumme(f.posten),
-      frist: C.addDays(C.today(), Number(S2.fristen.emailMahnung) || 7), abmahnung: S2.email.abmahnungStandard
-    };
+    const offenP = f.posten.filter(p => C.round2(p.offen) !== 0).sort((a, b) => (a.faellig || '').localeCompare(b.faellig || ''));
+    const werte = { to: C.emailsZuMieter(App.data, m), frist: C.addDays(C.today(), Number(S2.fristen.emailMahnung) || 7), abmahnung: S2.email.abmahnungStandard, sel: offenP.map(p => p.id) };
     let manuell = false;
     const v = await App.formModal('✉ Mahnen – ' + C.mieterName(m), [
       { k: 'to', l: 'Empfänger (E-Mail, mehrere mit ; trennen)', full: true, hint: m.email ? (m.emailQuelle === 'telefonliste' ? 'aus der Telefonliste' + (App.data.meta.telefonlisteStand ? ' vom ' + fmtDatum(App.data.meta.telefonlisteStand) : '') : '')
         : werte.to ? 'aus dem Adressbuch (Telefonliste)' : '<span class="rot-t">Keine E-Mail gefunden</span> – hier eintragen (wird beim Mieter gespeichert) oder Telefonliste unter Kontakte einlesen.' },
-      { k: 'monate', l: 'Miete für den Monat', req: true, hint: 'aus den offenen Mietposten' }, { k: 'betrag', l: 'in Höhe von (€)', t: 'money', req: true },
+      { k: 'sel', l: 'Diese Posten in die Mahnung aufnehmen' + (f.oposStand ? ' (Stand OPOS-Liste ' + fmtDatum(f.oposStand) + ')' : ''), t: 'multi', cls: 'liste',
+        o: offenP.map(p => [p.id, '<span class="nw">' + fmtDatum(p.faellig) + '</span> ' + esc(p.bez) + ' <small class="muted">' + (p.typ === 'miete' ? 'Miete' : p.offen < 0 ? 'Gutschrift' : 'Sonstiges') + '</small><b class="' + (p.offen < 0 ? 'gruen-t' : '') + '">' + fmtEUR(p.offen) + '</b>']),
+        hint: '<span id="mahnSumme"></span> <button type="button" class="s" data-alle="1">alle</button><button type="button" class="s" data-alle="miete">nur Miete</button><button type="button" class="s" data-alle="0">keine</button>' },
       { k: 'frist', l: 'zu zahlen bis', t: 'date', req: true }, { k: 'abmahnung', l: 'Abmahnung wegen verspäteter Zahlungen einfügen', t: 'checkbox' },
-      { k: 'html', t: 'html', html: '<label class="fld full"><span>Mail-Text (hier noch änderbar) <button type="button" class="s" id="mailNeu">↺ neu erzeugen</button></span><textarea name="mailText" id="mailText" rows="15"></textarea></label>' }
+      { k: 'html', t: 'html', html: '<label class="fld full"><span>Mail-Text (hier noch änderbar) <button type="button" class="s" id="mailNeu">↺ neu erzeugen</button></span><textarea name="mailText" id="mailText" rows="16"></textarea></label>' }
     ], werte, { wide: true, ok: '✉ In Outlook öffnen', onOpen(d) {
-      const form = d.querySelector('form'); const ta = d.querySelector('#mailText');
-      const upd = force => { if (manuell && !force) return; const x = App.collect(form); ta.value = mahnMail(f, x).text; manuell = false; };
+      const form = d.querySelector('form'); const ta = d.querySelector('#mailText'); const sum = d.querySelector('#mahnSumme');
+      const upd = force => { const x = App.collect(form); const mm = mahnMail(f, x); sum.innerHTML = 'Ausgewählt: ' + mm.anzahl + ' Posten, <b>' + fmtEUR(mm.betrag) + '</b>'; if (manuell && !force) return; ta.value = mm.text; manuell = false; };
       ta.addEventListener('input', () => { manuell = true; });
       form.addEventListener('change', e => { if (e.target !== ta) upd(); });
       form.addEventListener('input', e => { if (e.target !== ta && e.target.type !== 'checkbox') upd(); });
+      d.querySelectorAll('[data-alle]').forEach(b => { b.onclick = () => { d.querySelectorAll('input[name=sel]').forEach(c => { const p = f.posten.find(q => q.id === c.value); c.checked = b.dataset.alle === '1' || (b.dataset.alle === 'miete' && p && (p.typ === 'miete' || p.offen < 0)); }); upd(true); }; });
       d.querySelector('#mailNeu').onclick = () => upd(true);
       upd(true);
     } });
@@ -434,7 +489,7 @@
       : 'Outlook wird geöffnet (Text auch in der Zwischenablage).', 'ok', 9000);
     if (await App.confirm('Mahnung an ' + esc(v.to || 'den Mieter') + ' als versendet verbuchen?<br><small class="muted">Verlauf + WV „Zahlungseingang prüfen“ zum ' + fmtDatum(C.addDays(v.frist, Number(S2.puffer) || 0)) + '</small>', 'Ja, verbuchen', 'Nein')) {
       C.applyAction(App.data, 'opos', f.id, 'emailMahnung', { frist: v.frist, abmahnung: v.abmahnung,
-        verlaufText: 'Mahnung per E-Mail an ' + (v.to || '?') + ': Miete ' + v.monate + ', ' + fmtEUR(v.betrag) + ', Frist ' + fmtDatum(v.frist) + (v.abmahnung ? ' – inkl. Abmahnung (verspätete Zahlungen)' : '') });
+        verlaufText: 'Mahnung per E-Mail an ' + (v.to || '?') + ': ' + mail.anzahl + ' Posten, ' + fmtEUR(mail.betrag) + (mail.monate ? ' (Miete ' + mail.monate + ')' : '') + ', Frist ' + fmtDatum(v.frist) + (v.abmahnung ? ' – inkl. Abmahnung (verspätete Zahlungen)' : '') });
       App.commit(); App.toast('Verbucht – WV angelegt.');
     }
   };

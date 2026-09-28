@@ -33,10 +33,11 @@ Daten aus dem Prototyp (`opos_assistent_v1`) werden beim ersten Start automatisc
 
 ### OPOS-Liste einlesen
 
-OPOS → **⇪ OPOS-Liste einlesen**. Die Excel-Datei auswählen, den Stichtag angeben und das Tabellenblatt wählen. Das Format erkennt das Tool selbst:
+OPOS → **⇪ OPOS-Liste einlesen**. Die PDF oder Excel-Datei auswählen. Das Format erkennt das Tool selbst:
 
 | Format | Aussehen | Ergebnis |
 |---|---|---|
+| **OPOS-Liste (PDF)**, empfohlen | „Offene Postenliste“ aus der Verwaltungssoftware: je Debitor alle offenen Posten mit Buchungstext, Soll/Haben, Fälligkeit, Mahnstufe und „Summe PKto“ | Jeder Posten landet einzeln im Fall. Die Summe jedes Kontos wird gegen „Summe PKto“ geprüft. Der Fall zeigt, woraus sich die Schulden zusammensetzen (Miete, Vorauszahlungen, Abrechnungen, Mahngebühren, Gutschriften), mit Tagen überfällig. ✉ Mahnen listet die Posten in der Mail auf, auswählbar per Häkchen. Die Monatsmiete für den Kündigungscheck wird aus den Posten geschätzt, Gutschriften werden verrechnet |
 | **Rohdaten** aus der Verwaltungssoftware | `"name": "NAME Whg. 1 PFkt. 007 Mieter 01.03.25 -"`, `"saldo_zeile": "Summe PKto: 1.234,56"` | je Mieter ein Fall mit dem Saldo. Wohnung und Mietzeit werden übernommen, mehrere Konten (Wohnung + Stellplatz) zusammengefasst |
 | **Saldenliste** | Spalten `Name` · `Datum` (Mietzeit „01.03.25 - 31.07.26,“) · `Saldo`, optional `WV`, `Aktiv` und beliebige Notizspalten | wie oben. WV-Daten (auch „01.09“ oder „WV 30.09“) werden zu Wiedervorlagen, Notizspalten zur Fall-Notiz. Formeln wie `=1500-200` werden ausgerechnet |
 | **Einzelposten** | `Datum` · `Buchungstext` · `Betrag` · `Fälligkeit`, optional mit Titelzeile „… für NAME (Whg. 12):“ | Einzelposten für einen Mieter. Miete oder Sonstiges wird am Buchungstext erkannt. Danach funktionieren Kündigungscheck und die Postentabelle in Mahnungen |

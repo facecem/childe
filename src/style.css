@@ -143,3 +143,10 @@ dialog.docdlg{width:min(1000px,97vw)} dialog.docdlg .mbody{padding:10px 14px}
 .chips{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px} .chips button{margin:0}
 input[type=color]{height:34px;padding:2px;width:80px}
 body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body.kompakt .card{padding:10px 12px;margin-bottom:10px} body.kompakt main{padding-top:10px}
+
+/* Aufstellung offener Posten */
+.aufstellung{display:grid;grid-template-columns:1fr;gap:3px;max-width:620px;background:var(--line2);border-radius:var(--r);padding:10px 14px;margin-bottom:10px}
+.aufstellung div{display:flex;justify-content:space-between;gap:10px} .aufstellung .summe{border-top:2px solid var(--line);padding-top:4px;grid-column:1/-1;font-size:1.05em}
+.chip.ty-miete{background:#eef3ff;color:#3a5bb8} .chip.ty-gutschrift{background:var(--gruen-soft);color:var(--gruen)} .chip.ty-sonstig{background:var(--gelb-soft);color:var(--gelb)}
+.multi b{font-weight:600}
+.multi.liste{grid-template-columns:1fr;gap:0;padding:0} .multi.liste label{display:flex;gap:8px;padding:4px 8px;border-bottom:1px solid var(--line2)} .multi.liste label:hover{background:var(--pri-soft)} .multi.liste b{margin-left:auto;white-space:nowrap}

@@ -151,6 +151,13 @@ dialog.docdlg{width:min(1000px,97vw)} dialog.docdlg .mbody{padding:10px 14px}
 input[type=color]{height:34px;padding:2px;width:80px}
 body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body.kompakt .card{padding:10px 12px;margin-bottom:10px} body.kompakt main{padding-top:10px}
 
+/* Aufstellung offener Posten */
+.aufstellung{display:grid;grid-template-columns:1fr;gap:3px;max-width:620px;background:var(--line2);border-radius:var(--r);padding:10px 14px;margin-bottom:10px}
+.aufstellung div{display:flex;justify-content:space-between;gap:10px} .aufstellung .summe{border-top:2px solid var(--line);padding-top:4px;grid-column:1/-1;font-size:1.05em}
+.chip.ty-miete{background:#eef3ff;color:#3a5bb8} .chip.ty-gutschrift{background:var(--gruen-soft);color:var(--gruen)} .chip.ty-sonstig{background:var(--gelb-soft);color:var(--gelb)}
+.multi b{font-weight:600}
+.multi.liste{grid-template-columns:1fr;gap:0;padding:0} .multi.liste label{display:flex;gap:8px;padding:4px 8px;border-bottom:1px solid var(--line2)} .multi.liste label:hover{background:var(--pri-soft)} .multi.liste b{margin-left:auto;white-space:nowrap}
+
 </style>
 </head>
 <body>
@@ -325,7 +332,7 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
   }
   /** Offene Mietmonate als Text: „August 2026“, „Juli und August 2026“, „Juni, Juli und August 2026“ */
   function monateText(posten) {
-    const ym = Array.from(new Set((posten || []).filter(p => p.typ === 'miete' && round2(p.offen) > 0 && p.faellig).map(p => p.faellig.slice(0, 7)))).sort();
+    const ym = Array.from(new Set(nettoPosten(posten).filter(p => p.typ === 'miete' && round2(p.offen) > 0 && p.faellig).map(p => p.faellig.slice(0, 7)))).sort();
     if (!ym.length) return '';
     const jahre = new Set(ym.map(x => x.slice(0, 4)));
     const labels = ym.map(x => jahre.size === 1 ? monatLabel(x).split(' ')[0] : monatLabel(x));
@@ -460,7 +467,7 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
    */
   function kuendigungsCheck(posten, monatsmiete) {
     monatsmiete = round2(monatsmiete);
-    const miete = (posten || []).filter(p => p.typ === 'miete' && round2(p.offen) > 0);
+    const miete = nettoPosten(posten).filter(p => p.typ === 'miete' && round2(p.offen) > 0);
     const summeMiete = sum(miete, p => p.offen);
     const proMonat = {};
     miete.forEach(p => { const k = String(p.faellig || '').slice(0, 7); if (k) proMonat[k] = round2((proMonat[k] || 0) + Number(p.offen)); });
@@ -800,7 +807,7 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
       const typ = typRaw != null ? (/sonst/i.test(typRaw) ? 'sonstig' : typAusText(typRaw)) : typAusText(bez);
       const dup = fall.posten.find(p => p.bez === bez && p.faellig === faellig && round2(p.betrag) === round2(betrag));
       if (dup) { if (round2(dup.offen) !== round2(offen)) { dup.offen = offen; stat.postenAktualisiert++; } }
-      else { fall.posten.push({ id: uid(), bez, faellig, typ, betrag: betrag || offen, offen }); stat.postenNeu++; }
+      else { fall.posten.push({ id: uid(), bez, faellig, typ, betrag: betrag || offen, offen, quelle: 'import' }); stat.postenNeu++; }
       beruehrt.add(fall);
     });
     beruehrt.forEach(saldoAbgleich);
@@ -1164,6 +1171,183 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
     return st;
   }
 
+  /* ---------- OPOS-Liste (PDF, Einzelposten je Debitor) ---------- */
+  /** Umlaute der PDF-Ausgabe reparieren (‰ ä, ˆ ö, ¸ ü, ‹ Ü, ÷ Ö, „fl“ zwischen Großbuchstaben ß) */
+  function pdfUmlaute(t) {
+    return String(t || '').replace(/‰/g, 'ä').replace(/ˆ/g, 'ö').replace(/¸/g, 'ü').replace(/‹/g, 'Ü').replace(/÷/g, 'Ö').replace(/Ä/g, 'Ä')
+      .replace(/([A-ZÄÖÜ])\s?fl\s?([A-ZÄÖÜ])/g, '$1ß$2');
+  }
+  /** Textstücke einer Zeile zusammensetzen: aneinanderstoßende Stücke ohne Leerzeichen */
+  function zeileText(items) {
+    let out = '', ende = null;
+    items.forEach(it => { if (ende != null) out += (it.x - ende > 1.5 ? ' ' : ''); out += it.s; ende = it.x + (it.w || it.s.length * 4.5); });
+    return pdfUmlaute(out.replace(/\s+/g, ' ').trim());
+  }
+  function pdfZeilen(items, minY = 30) {
+    const z = [];
+    items.filter(it => String(it.s).trim() && it.y > minY).sort((a, b) => b.y - a.y || a.x - b.x).forEach(it => {
+      const r = z.find(q => Math.abs(q.y - it.y) <= 2);
+      if (r) r.c.push(it); else z.push({ y: it.y, c: [it] });
+    });
+    z.forEach(r => r.c.sort((a, b) => a.x - b.x));
+    return z;
+  }
+  const BETRAG_RE = /^-?[\d.]+,\d\d$/;
+  function typAusBuchung(text, aa) {
+    const t = String(text || '').toLowerCase();
+    if (/mahn|zins|abrechn|kaution|gebühr|gebuehr|kosten|schaden|gericht|anwalt/.test(t)) return 'sonstig';
+    if (/^82[0-5]$/.test(String(aa))) return 'miete';
+    return typAusText(t);
+  }
+  /**
+   * OPOS-Liste (PDF) zerlegen. pages: [[{ x, y, s, w }]]
+   * Kopf: „Objekt-Nr. 19400 STRASSE, PLZ, Ort“, „Auswertung zum …“; je Debitor: Kopfzeile, Posten, „Summe PKto“.
+   */
+  function parseOposPdf(pages) {
+    const out = { stand: '', druck: '', konten: [] };
+    let obj = { nr: '', strasse: '', plzort: '' }, k = null;
+    const inBereich = (c, a, b) => c.filter(it => it.x >= a && it.x < b);
+    pages.forEach(items => {
+      items.forEach(it => { it.s = pdfUmlaute(it.s); });
+      const fuss = items.find(it => /Druckdatum/.test(it.s));
+      if (fuss) { const d = items.find(it => Math.abs(it.y - fuss.y) < 2 && /^\d{2}\.\d{2}\.\d{4}$/.test(it.s.trim())); if (d) out.druck = parseDatum(d.s.trim()); }
+      pdfZeilen(items).forEach(z => {
+        const c = z.c, text = zeileText(c);
+        let m;
+        if ((m = text.match(/Auswertung zum\s*(\d{1,2}\.\d{1,2}\.\d{2,4})/))) out.stand = parseDatum(m[1]);
+        if ((m = text.match(/Objekt-Nr\.\s*(\S+)\s+(.*?)(?:\s+Auswertung zum.*)?$/))) {
+          const teile = m[2].split(/,\s*/);
+          obj = { nr: m[1], strasse: teile[0] || '', plzort: teile.slice(1).join(' ').trim() };
+          return;
+        }
+        if (/^Debitor/.test(c[0].s)) {
+          const kopf = zeileText(inBereich(c, 80, 295)).match(/^(\d+)\s+(.*)$/) || [];
+          const deb = kopf[1] || '';
+          if (k && k.debitor === deb && !k.summe) return; // Seitenumbruch: Block läuft weiter
+          const zeit = parseMietzeit(zeileText(inBereich(c, 640, 900)));
+          const mitte = zeileText(inBereich(c, 295, 640));
+          k = { objektNr: obj.nr, objektStrasse: obj.strasse, objektPlzOrt: obj.plzort, debitor: deb, name: (kopf[2] || '').trim(),
+            whg: ((mitte.match(/Whg\.\s*(\S+)/) || [])[1] || ''), pfkt: ((mitte.match(/PFkt\.\s*(\d+)/) || [])[1] || ''), rolle: ((mitte.match(/PFkt\.\s*\d+\s+(.*)$/) || [])[1] || '').trim(),
+            von: zeit.von, bis: zeit.bis, lage: '', posten: [], summe: null };
+          out.konten.push(k);
+          return;
+        }
+        if (!k) return;
+        if (/^Lage\b/.test(zeileText(inBereich(c, 290, 330))) || (c[0].x > 290 && c[0].x < 300 && c[0].s === 'Lage')) { k.lage = zeileText(inBereich(c, 320, 640)); return; }
+        if (/Summe PKto/.test(text)) {
+          const sm = { soll: 0, haben: 0, saldo: 0, mahnkosten: 0, gesamt: 0 };
+          c.filter(it => /^-?[\d.]+,\d\d(\s*[HS])?$/.test(it.s.trim())).forEach(it => {
+            const v = parseBetrag(it.s.replace(/[HS]/, '')) * (/H\s*$/.test(it.s) ? -1 : 1);
+            const f = it.x < 475 ? 'soll' : it.x < 540 ? 'haben' : it.x < 640 ? 'saldo' : it.x < 720 ? 'mahnkosten' : 'gesamt';
+            sm[f] = f === 'soll' || f === 'haben' ? Math.abs(v) : v;
+          });
+          k.summe = sm;
+          return;
+        }
+        const bu = c.find(it => it.x >= 55 && it.x < 110 && /^\d{2}\.\d{2}\.\d{2,4}$/.test(it.s.trim()));
+        const aa = c.find(it => it.x >= 148 && it.x < 170 && /^\d{3}$/.test(it.s.trim()));
+        if (bu && aa) {
+          const betr = x0 => inBereich(c, x0[0], x0[1]).map(it => it.s.trim()).find(v => BETRAG_RE.test(v));
+          const soll = parseBetrag(betr([395, 475]) || 0), haben = parseBetrag(betr([475, 532]) || 0);
+          const fae = c.find(it => it.x >= 565 && it.x < 610 && /^\d{2}\.\d{2}\.\d{2,4}$/.test(it.s.trim()));
+          const ausg = c.find(it => it.x >= 640 && it.x < 690 && /^\d{2}\.\d{2}\.\d{2,4}$/.test(it.s.trim()));
+          const tage = c.find(it => it.x >= 610 && it.x < 640 && /^-?\d+$/.test(it.s.trim()));
+          const mst = c.find(it => it.x < 55 && /^\d$/.test(it.s.trim()));
+          const bez = zeileText(inBereich(c, 180, 395)).replace(/\s*\|.*$/, '');
+          k.posten.push({ mst: mst ? +mst.s : 0, budatum: parseDatum(bu.s.trim()), beleg: zeileText(inBereich(c, 110, 148)), aa: aa.s.trim(), text: bez,
+            soll, haben, betrag: round2(soll - haben), faellig: fae ? parseDatum(fae.s.trim()) : parseDatum(bu.s.trim()), tage: tage ? +tage.s : null,
+            ausgeglichen: ausg ? parseDatum(ausg.s.trim()) : '', typ: haben > 0 && !soll ? 'gutschrift' : typAusBuchung(bez, aa.s.trim()) });
+        }
+      });
+    });
+    out.konten.forEach(x => {
+      x.saldo = sum(x.posten, p => p.betrag);
+      x.kontrolle = x.summe ? round2(x.saldo) === round2(x.summe.saldo) : null;
+    });
+    return out;
+  }
+  /** Monatsmiete aus vollen Mietposten eines Monats schätzen (Grundmiete + Vorauszahlungen, ohne „Diff.“-Posten) */
+  function monatsmieteSchaetzen(posten) {
+    const proMonat = {};
+    (posten || []).filter(p => p.typ === 'miete' && p.soll > 0 && !/^diff/i.test(p.text || p.bez || '')).forEach(p => { const k = (p.faellig || '').slice(0, 7); proMonat[k] = round2((proMonat[k] || 0) + p.soll); });
+    const werte = Object.keys(proMonat).sort().map(k => proMonat[k]);
+    return werte.length ? werte[werte.length - 1] : 0;
+  }
+  /** Offene Posten nach Verrechnung von Gutschriften/Zahlungen (negativ) mit den ältesten Forderungen */
+  function nettoPosten(posten) {
+    const plus = (posten || []).filter(p => round2(p.offen) > 0);
+    const gut = -sum((posten || []).filter(p => round2(p.offen) < 0), p => p.offen);
+    return gut > 0 ? verteileZahlung(plus, gut).posten.filter(p => round2(p.offen) > 0) : plus;
+  }
+  /** OPOS-Liste (PDF) übernehmen: Posten je Fall werden durch die Liste ersetzt (manuell erfasste bleiben) */
+  function importOposPdf(data, liste, o = {}) {
+    const heute = o.heute || today(), stand = liste.stand || liste.druck || heute;
+    const min = o.mindestSaldo == null ? 0.01 : o.mindestSaldo;
+    const st = { konten: liste.konten.length, faelleNeu: 0, mieterNeu: 0, objekteNeu: 0, aktualisiert: 0, unveraendert: 0, erledigt: 0, guthaben: 0, posten: 0, kontrolleFehler: [], uebersprungen: 0, summe: 0 };
+    const gesehen = new Set(), objekteInListe = new Set();
+    liste.konten.forEach(kt => {
+      let ob = data.objekte.find(x => x.nr === kt.objektNr);
+      if (!ob && kt.objektNr) {
+        const bez = titleCase(kt.objektStrasse);
+        ob = { id: uid(), nr: kt.objektNr, bezeichnung: bez, strasse: bez, plzort: kt.objektPlzOrt, eigentuemer: '' }; data.objekte.push(ob); st.objekteNeu++;
+      }
+      if (ob) objekteInListe.add(ob.id);
+      if (kt.kontrolle === false) st.kontrolleFehler.push(kt.debitor + ' ' + kt.name);
+      let m = data.mieter.find(x => x.mietnr && x.mietnr === kt.debitor) || findeMieter(data, { name: kt.name, von: kt.von }, gesehen);
+      if (!m) {
+        const k2 = normName(kt.name);
+        m = data.mieter.find(x => !gesehen.has(x.id) && (!kt.von || !x.mietbeginn || x.mietbeginn === kt.von) && namensfeldGleich(normName(x.importName || ''), k2)) || null;
+      }
+      if (!m && !(kt.saldo >= min)) { st.uebersprungen++; return; }
+      if (!m) {
+        m = Object.assign({ id: uid(), objektId: ob ? ob.id : '', whg: '', anschrift: '', email: '', tel: '', mietnr: kt.debitor, gesamtmiete: 0, mietbeginn: kt.von, mietende: kt.bis, kaution: 0, importName: kt.name }, nameAufteilen(kt.name));
+        data.mieter.push(m); st.mieterNeu++;
+      }
+      gesehen.add(m.id);
+      m.mietnr = kt.debitor; if (!m.importName) m.importName = kt.name;
+      if (kt.von && !m.mietbeginn) m.mietbeginn = kt.von;
+      if (kt.bis !== undefined && (kt.bis || m.mietende)) m.mietende = kt.bis || m.mietende;
+      const akt = data.objekte.find(x => x.id === m.objektId);
+      if (ob && (!akt || PLATZHALTER_OBJEKT.test(akt.bezeichnung))) m.objektId = ob.id;
+      if ((!m.whg || /^Whg\. [\d, Whg.]+$/.test(m.whg)) && (kt.lage || kt.whg)) m.whg = (kt.lage ? kt.lage + ' ' : '') + '(Whg. ' + kt.whg + ')';
+      let fall = data.opos.find(f => f.mieterId === m.id && f.stufe !== 'erledigt');
+      if (!fall) {
+        if (!(kt.saldo >= min)) { if (kt.saldo < 0) st.guthaben++; else st.uebersprungen++; return; }
+        fall = { id: uid(), mieterId: m.id, stufe: 'neu', posten: [], raten: [], notiz: '', angelegt: heute };
+        data.opos.push(fall); st.faelleNeu++;
+        if (o.pruefWV) createWV(data, 'opos', fall.id, heute, 'Importierten Fall prüfen – Mahnen?', { regel: 'opos:neu', heute });
+      }
+      const vorher = offenSumme(fall.posten);
+      fall.posten = fall.posten.filter(p => !p.saldo && !p.quelle);
+      kt.posten.forEach(p => fall.posten.push({ id: uid(), bez: p.text, faellig: p.faellig, budatum: p.budatum, beleg: p.beleg, aa: p.aa, mst: p.mst, tage: p.tage,
+        typ: p.typ, betrag: p.betrag, offen: p.betrag, quelle: 'opos-pdf' }));
+      fall.oposStand = stand; fall.mahnstufeListe = Math.max(0, ...kt.posten.map(p => p.mst || 0));
+      if (!(m.gesamtmiete > 0) || m.mieteGeschaetzt) { const mm = monatsmieteSchaetzen(kt.posten); if (mm > 0) { m.gesamtmiete = mm; m.mieteGeschaetzt = true; } }
+      st.posten += kt.posten.length;
+      const nachher = offenSumme(fall.posten);
+      st.summe = round2(st.summe + Math.max(0, nachher));
+      if (round2(vorher) !== round2(nachher)) {
+        addVerlauf(data, 'opos', fall.id, 'import', 'OPOS-Liste (Stand ' + fmtDatum(stand) + ') eingelesen: ' + kt.posten.length + ' Posten, offen ' + fmtEUR(vorher) + ' → ' + fmtEUR(nachher), heute);
+        st.aktualisiert++;
+      } else st.unveraendert++;
+      if (nachher <= 0) {
+        applyAction(data, 'opos', fall.id, 'erledigt', { heute, verlaufText: nachher < 0 ? 'Guthaben ' + fmtEUR(-nachher) + ' lt. OPOS-Liste – erledigt' : 'Ausgeglichen lt. OPOS-Liste – erledigt' });
+        st.erledigt++;
+      }
+    });
+    if (o.fehlendeErledigen) {
+      data.opos.filter(f => f.stufe !== 'erledigt' && f.posten.some(p => p.quelle || p.saldo)).forEach(f => {
+        const m = data.mieter.find(x => x.id === f.mieterId);
+        if (!m || gesehen.has(m.id) || !objekteInListe.has(m.objektId)) return;
+        f.posten = f.posten.filter(p => !p.saldo && !p.quelle);
+        if (offenSumme(f.posten) <= 0) { applyAction(data, 'opos', f.id, 'erledigt', { heute, verlaufText: 'Nicht mehr in der OPOS-Liste (Stand ' + fmtDatum(stand) + ') – erledigt' }); st.erledigt++; }
+      });
+    }
+    data.meta.oposStand = stand;
+    if ((data.adressbuch || []).length) Object.assign(st, adressbuchVerknuepfen(data));
+    return st;
+  }
+
   /* ---------- E-Mail (.eml) ---------- */
   function asciiDateiname(s) {
     return String(s).replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/Ä/g, 'Ae').replace(/Ö/g, 'Oe').replace(/Ü/g, 'Ue').replace(/ß/g, 'ss')
@@ -1196,7 +1380,7 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
     offenSumme, kuendigungsCheck, verteileZahlung, kautionsabrechnung, verjaehrung, kautionAmpel, ratenplan,
     monateText, defaultEmail, wvDatum, createWV, completeWV, snoozeWV, setWVDatum, plusEinheit, WV_EINHEITEN, defaultUI, closeWV, offeneWV, addVerlauf, wvRegeln, applyAction, findFall,
     getPath, vorlageZuHTML, vorlageZuText,
-    parseCSV, guessMapping, typAusText, importOPOS, normName, nameAufteilen, parseMietzeit, parseSaldo, parseWV, erkenneFormat, titelMieter, parseJsonBlatt, parseSaldenBlatt, findeMieter, saldoAbgleich, importSalden, parseTelefonliste, importTelefonliste, adresseZuMieter, emailsZuMieter, adressbuchVerknuepfen, whgNr, asciiDateiname, buildEML
+    parseCSV, guessMapping, typAusText, importOPOS, normName, nameAufteilen, parseMietzeit, parseSaldo, parseWV, erkenneFormat, titelMieter, parseJsonBlatt, parseSaldenBlatt, findeMieter, saldoAbgleich, importSalden, parseTelefonliste, importTelefonliste, parseOposPdf, importOposPdf, nettoPosten, pdfUmlaute, typAusBuchung, monatsmieteSchaetzen, adresseZuMieter, emailsZuMieter, adressbuchVerknuepfen, whgNr, asciiDateiname, buildEML
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = Core;
   else root.Core = Core;
@@ -1379,7 +1563,11 @@ Mit freundlichen Grüßen
       betreff: 'Zahlungserinnerung – Miete {{monate}} – {{objekt.strasse}}{{mieter.whgKomma}}',
       text: `Sehr geehrte Damen und Herren,
 
-nach Prüfung unserer Zahlungseingänge haben wir festgestellt, dass die Miete für {{fuerMonat}} {{monate}} in Höhe von {{betrag}} bislang nicht beglichen wurde.
+nach Prüfung unserer Zahlungseingänge haben wir festgestellt, dass folgende Beträge aus Ihrem Mietkonto bislang nicht beglichen wurden:
+
+{{postenListe}}
+
+Offener Gesamtbetrag: {{betrag}}
 
 Wir bitten Sie höflich, den ausstehenden Betrag spätestens bis zum {{frist}} zu überweisen, um weitere Schritte zu vermeiden.
 {{abmahnungAbsatz}}
@@ -1561,7 +1749,7 @@ Mit freundlichen Grüßen
     ['objekt.eigentuemer', ''], ['firma.firma', ''], ['firma.tel', ''], ['firma.mail', ''], ['sachbearbeiter', ''],
     ['summe', 'offene Mietposten+Sonstige'], ['summeGesamt', 'inkl. Mahngebühr'], ['summeMiete', 'nur Mietposten'], ['postenTabelle', 'Tabelle offene Posten'],
     ['mahngebuehrSatz', 'Satz zur Mahngebühr (leer bei 0)'], ['kuendigungsgrund', 'aus Kündigungscheck'], ['ordentlichZum', '§ 573c-Termin'],
-    ['abmahnungDetails', 'Freitext'], ['monate', 'offene Mietmonate (E-Mail-Mahnung)'], ['fuerMonat', '„den Monat“ / „die Monate“'], ['betrag', 'Betrag (E-Mail-Mahnung)'], ['abmahnungAbsatz', 'Abmahnungs-Absatz oder leer'], ['ratenTabelle', ''], ['ratenSumme', ''], ['ratenVerzugTage', ''],
+    ['abmahnungDetails', 'Freitext'], ['postenListe', 'Aufstellung der offenen Posten (E-Mail-Mahnung)'], ['monate', 'offene Mietmonate (E-Mail-Mahnung)'], ['fuerMonat', '„den Monat“ / „die Monate“'], ['betrag', 'Betrag (E-Mail-Mahnung)'], ['abmahnungAbsatz', 'Abmahnungs-Absatz oder leer'], ['ratenTabelle', ''], ['ratenSumme', ''], ['ratenVerzugTage', ''],
     ['schaden.titel', ''], ['schaden.beschreibung', ''], ['schaden.gemeldetAm', ''], ['schaden.dringlichkeitText', ''], ['handwerker.firma', ''],
     ['terminText', ''], ['angebotText', ''], ['rechnung.nr', ''], ['rechnung.datum', ''], ['weiterbelastungBetrag', ''],
     ['kaution.betrag', ''], ['kaution.auszahlung', ''], ['kaution.uebergabeAm', ''], ['kaution.auszahlungIban', ''], ['kautionTabelle', ''],
@@ -1581,7 +1769,7 @@ Mit freundlichen Grüßen
       (fuss ? '<tfoot><tr>' + fuss.map((v, i) => td(v === '' ? '' : '<b>' + esc(v) + '</b>', i)).join('') + '</tr></tfoot>' : '') + '</table>';
   }
   function postenTabelle(posten) {
-    const offen = posten.filter(p => C.round2(p.offen) > 0).sort((a, b) => (a.faellig || '').localeCompare(b.faellig || ''));
+    const offen = posten.filter(p => C.round2(p.offen) !== 0).sort((a, b) => (a.faellig || '').localeCompare(b.faellig || ''));
     return {
       html: tabelle(['Fällig', 'Bezeichnung', 'Betrag', 'offen'], offen.map(p => [fmtDatum(p.faellig), p.bez, fmtEUR(p.betrag), fmtEUR(p.offen)]), ['', 'Summe', '', fmtEUR(C.sum(offen, p => p.offen))], [2, 3]),
       text: offen.map(p => '- ' + fmtDatum(p.faellig) + '  ' + p.bez + ': ' + fmtEUR(p.offen)).join('\n') + '\nSumme: ' + fmtEUR(C.sum(offen, p => p.offen))
@@ -1964,7 +2152,7 @@ Mit freundlichen Grüßen
     switch (f.t) {
       case 'html': return '<div class="full">' + f.html + '</div>';
       case 'checkbox': return '<label class="chk' + (f.full ? ' full' : '') + '"><input type="checkbox" name="' + f.k + '"' + (val ? ' checked' : '') + '> ' + esc(f.l) + '</label>';
-      case 'multi': return '<div class="fld full"><span>' + esc(f.l) + '</span><div class="multi">' + f.o.map(([ov, ol]) =>
+      case 'multi': return '<div class="fld full"><span>' + esc(f.l) + '</span><div class="multi' + (f.cls ? ' ' + f.cls : '') + '">' + f.o.map(([ov, ol]) =>
         '<label class="chk"><input type="checkbox" data-multi name="' + f.k + '" value="' + esc(ov) + '"' + ((val || []).includes(ov) ? ' checked' : '') + '> ' + ol + '</label>').join('') + '</div>' + (f.hint ? '<small>' + f.hint + '</small>' : '') + '</div>';
       case 'select': inp = '<select name="' + f.k + '"' + req + '>' + f.o.map(([ov, ol]) => '<option value="' + esc(ov) + '"' + (String(ov) === String(val) ? ' selected' : '') + '>' + esc(ol) + '</option>').join('') + '</select>'; break;
       case 'textarea': inp = '<textarea name="' + f.k + '" rows="' + (f.rows || 4) + '"' + req + attr + '>' + esc(val) + '</textarea>'; break;
@@ -2315,7 +2503,7 @@ Mit freundlichen Grüßen
       const v = await formModal(m ? 'Mieter bearbeiten' : 'Neuer Mieter', App.mieterFelder(), m || { objektId: ds.objektId || App.f.stamm.objekt || '' }, { wide: true });
       if (!v) return null;
       delete v._action;
-      if (m) { Object.assign(m, v); App.commit(); return m; }
+      if (m) { if (v.gesamtmiete !== m.gesamtmiete) m.mieteGeschaetzt = false; Object.assign(m, v); App.commit(); return m; }
       const neu = Object.assign({ id: C.uid() }, v); App.data.mieter.push(neu); App.commit(); return neu;
     },
     async mieterDel(ds) {
@@ -2766,6 +2954,20 @@ Mit freundlichen Grüßen
   }
   function aeltesteFaelligkeit(f) { const l = f.posten.filter(p => p.offen > 0 && p.faellig).map(p => p.faellig).sort(); return l[0] || ''; }
   const mailVon = m => C.emailsZuMieter(App.data, m);
+  const TYP_LABEL = { miete: 'Miete', sonstig: 'Sonstiges', gutschrift: 'Gutschrift' };
+  /** Aufstellung: woraus sich der Saldo zusammensetzt */
+  function aufstellung(posten) {
+    const offen = (posten || []).filter(p => C.round2(p.offen) !== 0); if (!offen.length) return '';
+    const gr = {}; offen.forEach(p => {
+      const g = p.typ === 'gutschrift' || p.offen < 0 ? 'Gutschriften / Zahlungen' : p.typ === 'miete' ? (/bk|hk|nk|vorauszahl|vz/i.test(p.bez) ? 'Neben-/Heizkostenvorauszahlungen' : 'Miete (Grundmiete, Garage, Stellplatz …)')
+        : /mahn|zins/i.test(p.bez) ? 'Mahngebühren / Verzugszinsen' : /abrechn/i.test(p.bez) ? 'Betriebs-/Heizkostenabrechnungen' : 'Sonstiges';
+      (gr[g] = gr[g] || []).push(p);
+    });
+    const monate = C.monateText(posten);
+    return '<div class="aufstellung">' + Object.entries(gr).map(([g, l]) => '<div><span>' + g + ' <small class="muted">(' + l.length + ')</small></span><b class="' + (C.sum(l, p => p.offen) < 0 ? 'gruen-t' : '') + '">' + fmtEUR(C.sum(l, p => p.offen)) + '</b></div>').join('') +
+      '<div class="summe"><span>Saldo</span><b>' + fmtEUR(C.offenSumme(posten)) + '</b></div></div>' +
+      (monate ? '<p class="small muted">Offene Mietmonate (nach Verrechnung der Gutschriften): ' + esc(monate) + '</p>' : '');
+  }
   const stufeChip = st => H.chip(S[st] || st, 'st-' + st);
 
   App.views.opos = {
@@ -2809,22 +3011,28 @@ Mit freundlichen Grüßen
         '<span class="muted">' + esc(o.bezeichnung || '') + (m.whg ? ' · ' + esc(m.whg) : '') + '</span><span class="sp"></span><button class="s del" data-act="oposDel" data-id="' + id + '">Fall löschen</button></div>' +
         '<div class="cols3">' +
         '<section class="card"><h3>Mieter</h3><dl class="kv">' +
-        '<dt>Mietnr.</dt><dd>' + esc(m.mietnr || '–') + '</dd><dt>Gesamtmiete</dt><dd>' + fmtEUR(m.gesamtmiete) + '</dd><dt>Mietbeginn</dt><dd>' + fmtDatum(m.mietbeginn) + '</dd>' +
+        '<dt>Mietnr.</dt><dd>' + esc(m.mietnr || '–') + '</dd><dt>Gesamtmiete</dt><dd>' + fmtEUR(m.gesamtmiete) + (m.mieteGeschaetzt ? ' <small class="muted" title="aus Grundmiete + Vorauszahlungen der OPOS-Liste; unter „Mieter bearbeiten“ korrigierbar">(geschätzt)</small>' : '') + '</dd><dt>Mietbeginn</dt><dd>' + fmtDatum(m.mietbeginn) + '</dd>' +
         '<dt>E-Mail</dt><dd>' + esc(m.email || '–') + '</dd><dt>Telefon</dt><dd>' + esc(m.tel || '–') + '</dd><dt>Eigentümer</dt><dd>' + esc(o.eigentuemer || '–') + '</dd></dl>' +
         '<button class="s" data-act="mieterEdit" data-id="' + m.id + '">Mieter bearbeiten</button></section>' +
         '<section class="card"><h3>Stand</h3><div class="big ' + (offen > 0 ? 'rot-t' : 'gruen-t') + '">' + fmtEUR(offen) + '</div><div class="muted">offen, davon Miete ' + fmtEUR(C.offenSumme(x.posten, 'miete')) + '</div>' +
-        (x.frist ? '<p>Letzte Frist: <b>' + fmtDatum(x.frist) + '</b></p>' : '') +
+        (x.frist ? '<p>Letzte Frist: <b>' + fmtDatum(x.frist) + '</b></p>' : '') + (x.mahnstufeListe ? '<p class="small">Mahnstufe lt. OPOS-Liste: <b>' + x.mahnstufeListe + '</b></p>' : '') +
         '<div class="pruef ' + (check.moeglich ? 'rot' : '') + '"><b>Kündigungscheck § 543 Abs. 2 S. 1 Nr. 3 BGB</b><br>' + esc(check.text) + '<br><small>' + esc(check.hinweis) + ' Nur Mietposten zählen. Schonfristzahlung (§ 569 Abs. 3 Nr. 2 BGB) beachten.</small></div></section>' +
         '<section class="card"><h3>Aktionen</h3><div class="btns">' +
         '<button class="primary" data-act="oposMahnenMail" data-id="' + id + '" title="öffnet Outlook mit fertiger Mahnung">✉ Mahnen</button>' + briefBtn('erinnerung', 'Zahlungserinnerung') + briefBtn('mahnung1', '1. Mahnung') + briefBtn('mahnungLetzte', 'Letzte Mahnung') + briefBtn('kuendigung', 'Kündigung …') +
         '<button data-act="oposBrief" data-id="' + id + '" data-v="abmahnung">Abmahnung (unpünktl.)</button><button data-act="oposRaten" data-id="' + id + '">Ratenzahlung …</button>' +
         '</div><div class="btns"><button class="primary" data-act="oposZahlung" data-id="' + id + '">€ Zahlung verbuchen</button><button data-act="oposAnwalt" data-id="' + id + '">An Anwalt übergeben</button>' +
         '<button data-act="oposStufe" data-id="' + id + '">Stufe setzen</button><button data-act="oposErledigt" data-id="' + id + '">Fall erledigt</button></div></section></div>' +
-        '<section class="card"><div class="toolbar"><h3>Posten</h3><span class="sp"></span><button data-act="oposMieten" data-id="' + id + '">+ Monatsmieten</button><button data-act="postenEdit" data-id="' + id + '">+ Posten</button></div>' +
-        (posten.length ? '<table class="tbl"><thead><tr><th>Fällig</th><th>Bezeichnung</th><th>Typ</th><th class="r">Betrag</th><th class="r">offen</th><th></th></tr></thead><tbody>' +
-          posten.map(p => '<tr class="' + (p.offen <= 0 ? 'done' : '') + '"><td>' + fmtDatum(p.faellig) + '</td><td>' + esc(p.bez) + '</td><td>' + (p.typ === 'miete' ? 'Miete' : 'Sonstig') + '</td><td class="r">' + fmtEUR(p.betrag) + '</td>' +
-            '<td class="r"><b>' + fmtEUR(p.offen) + '</b></td><td class="r nw"><button class="s" data-act="postenEdit" data-id="' + id + '" data-p="' + p.id + '">Bearbeiten</button><button class="s del" data-act="postenDel" data-id="' + id + '" data-p="' + p.id + '">×</button></td></tr>').join('') +
-          '</tbody></table>' : H.leer('Noch keine Posten.')) + '</section>' +
+        '<section class="card"><div class="toolbar"><h3>Offene Posten</h3>' + (x.oposStand ? '<span class="muted">Stand OPOS-Liste ' + fmtDatum(x.oposStand) + '</span>' : '') +
+        '<span class="sp"></span><button data-act="oposMieten" data-id="' + id + '">+ Monatsmieten</button><button data-act="postenEdit" data-id="' + id + '">+ Posten</button></div>' +
+        aufstellung(x.posten) +
+        (posten.length ? '<table class="tbl"><thead><tr><th>Fällig</th><th>Buchungstext</th><th>Art</th><th>Beleg</th><th>MS</th><th class="r">überfällig</th><th class="r">Betrag</th><th class="r">offen</th><th></th></tr></thead><tbody>' +
+          posten.map(p => { const tg = p.faellig ? C.diffDays(p.faellig, C.today()) : null;
+            return '<tr class="' + (C.round2(p.offen) === 0 ? 'done' : '') + '"><td class="nw">' + fmtDatum(p.faellig) + '</td><td>' + esc(p.bez) + (p.saldo ? ' <small class="muted">(nicht aufgeschlüsselt)</small>' : '') + '</td>' +
+              '<td>' + H.chip(TYP_LABEL[p.typ] || p.typ, 'ty-' + p.typ) + '</td><td class="small muted">' + esc(p.beleg || '') + (p.aa ? ' <span title="Buchungsart">' + esc(p.aa) + '</span>' : '') + '</td>' +
+              '<td class="small">' + (p.mst ? p.mst : '') + '</td><td class="r small ' + (tg > 30 && p.offen > 0 ? 'rot-t' : 'muted') + '">' + (tg > 0 && p.offen > 0 ? tg + ' T' : '') + '</td>' +
+              '<td class="r">' + fmtEUR(p.betrag) + '</td><td class="r"><b class="' + (p.offen < 0 ? 'gruen-t' : '') + '">' + fmtEUR(p.offen) + '</b></td>' +
+              '<td class="r nw"><button class="s" data-act="postenEdit" data-id="' + id + '" data-p="' + p.id + '">Bearbeiten</button><button class="s del" data-act="postenDel" data-id="' + id + '" data-p="' + p.id + '">×</button></td></tr>'; }).join('') +
+          '</tbody><tfoot><tr><td colspan="7"><b>Saldo</b></td><td class="r"><b>' + fmtEUR(C.offenSumme(x.posten)) + '</b></td><td></td></tr></tfoot></table>' : H.leer('Noch keine Posten.')) + '</section>' +
         (x.raten && x.raten.length ? '<section class="card"><h3>Ratenplan</h3><table class="tbl"><thead><tr><th>Rate</th><th>fällig</th><th class="r">Betrag</th><th>Status</th></tr></thead><tbody>' +
           x.raten.map((r, i) => '<tr class="' + (r.bezahlt ? 'done' : r.faellig < C.today() ? 'ueber' : '') + '"><td>' + r.nr + '.</td><td>' + fmtDatum(r.faellig) + '</td><td class="r">' + fmtEUR(r.betrag) + '</td><td>' +
             '<label class="chk"><input type="checkbox" data-change="rateBezahlt" data-id="' + id + '" data-i="' + i + '"' + (r.bezahlt ? ' checked' : '') + '> bezahlt</label></td></tr>').join('') + '</tbody></table></section>' : '') +
@@ -2887,7 +3095,7 @@ Mit freundlichen Grüßen
       const m = H.mieter(f.mieterId) || {};
       const v = await App.formModal(p ? 'Posten bearbeiten' : 'Neuer Posten', [
         { k: 'bez', l: 'Bezeichnung', req: true, full: true, list: 'dl_posten' }, { k: 'faellig', l: 'Fällig am', t: 'date', req: true },
-        { k: 'typ', l: 'Typ', t: 'select', o: [['miete', 'Miete (zählt für Kündigung)'], ['sonstig', 'Sonstig (NK-Nachzahlung, Kosten …)']] },
+        { k: 'typ', l: 'Typ', t: 'select', o: [['miete', 'Miete (zählt für Kündigung)'], ['sonstig', 'Sonstig (NK-Nachzahlung, Kosten …)'], ['gutschrift', 'Gutschrift / Zahlung (Betrag negativ)']] },
         { k: 'betrag', l: 'Betrag (€)', t: 'money', req: true }, { k: 'offen', l: 'davon offen (€)', t: 'money', hint: 'leer = voller Betrag' }
       ], p || { typ: 'miete', betrag: m.gesamtmiete || '', faellig: C.today() }, {
         outro: '<datalist id="dl_posten"><option value="Miete ' + C.today().slice(5, 7) + '/' + C.today().slice(0, 4) + '"><option value="Nebenkostennachzahlung"><option value="Mahnkosten"><option value="Rücklastschriftgebühr"></datalist>'
@@ -3027,12 +3235,13 @@ Mit freundlichen Grüßen
     },
     async oposImport() {
       const v = await App.formModal('OPOS-Liste einlesen', [
-        { k: 'datei', l: 'Datei (Excel .xlsx/.xls oder CSV)', t: 'file', accept: '.xlsx,.xlsm,.xls,.ods,.csv,.txt', full: true },
+        { k: 'datei', l: 'Datei (OPOS-Liste als PDF, Excel oder CSV)', t: 'file', accept: '.pdf,.xlsx,.xlsm,.xls,.ods,.csv,.txt', full: true },
         { k: 'stand', l: 'Stand der Liste (Stichtag)', t: 'date', d: C.today(), req: true }], {},
-        { ok: 'Weiter', intro: '<p class="muted">Erkannt werden automatisch:</p><ul class="small muted"><li><b>Saldenliste</b> je Mieter (Spalten Name · Datum · Saldo, dazu WV- und Notizspalten)</li>' +
+        { ok: 'Weiter', intro: '<p class="muted">Erkannt werden automatisch:</p><ul class="small muted"><li><b>OPOS-Liste (PDF)</b> aus der Verwaltungssoftware – alle offenen Posten je Mieter (empfohlen: zeigt, woraus sich die Schulden zusammensetzen)</li><li><b>Saldenliste</b> je Mieter (Spalten Name · Datum · Saldo, dazu WV- und Notizspalten)</li>' +
           '<li><b>Rohdaten</b> aus der Verwaltungssoftware (<code>"name": "… Whg. … PFkt. … Mieter …"</code> / <code>"saldo_zeile": "Summe PKto: …"</code>)</li>' +
           '<li><b>Einzelposten</b> (Datum · Buchungstext · Betrag · Fälligkeit), z. B. für einen Mieter</li></ul><p class="small muted">Monatlich erneut einlesen: Salden werden abgeglichen, nichts wird doppelt angelegt.</p>' });
       if (!v || !v.datei[0]) return;
+      if (/\.pdf$/i.test(v.datei[0].name)) return importOposPdfDialog(v.datei[0]);
       let blaetter;
       try { blaetter = await D.leseArbeitsmappe(v.datei[0]); }
       catch (e) { return App.toast('Datei konnte nicht gelesen werden: ' + e.message + (/xlsx/i.test(e.message) ? ' – ohne Internet bitte als CSV speichern.' : ''), 'err', 9000); }
@@ -3057,6 +3266,36 @@ Mit freundlichen Grüßen
       return importPostenDialog(blatt);
     }
   });
+
+  async function importOposPdfDialog(file) {
+    App.toast('PDF wird gelesen …');
+    let liste;
+    try { liste = C.parseOposPdf(await D.lesePdfText(file)); }
+    catch (e) { return App.toast('PDF konnte nicht gelesen werden: ' + e.message + ' (für das Einlesen wird einmal Internet benötigt)', 'err', 9000); }
+    if (!liste.konten.length) return App.toast('Keine Debitoren gefunden – ist es die „Offene Postenliste“ aus der Verwaltungssoftware (mit Textebene)?', 'err', 9000);
+    const K = liste.konten, fehler = K.filter(k => k.kontrolle === false);
+    const objekte = Array.from(new Set(K.map(k => k.objektNr + ' ' + k.objektStrasse)));
+    const vorschau = '<div class="scrollx"><table class="tbl small"><thead><tr><th>Debitor</th><th>Name</th><th>Whg</th><th class="r">Posten</th><th class="r">Saldo</th><th>Kontrolle</th></tr></thead><tbody>' +
+      K.slice(0, 10).map(k => '<tr><td>' + esc(k.debitor) + '</td><td>' + esc(k.name) + '</td><td>' + esc(k.whg) + (k.lage ? ' · ' + esc(k.lage) : '') + '</td><td class="r">' + k.posten.length + '</td><td class="r">' + fmtEUR(k.saldo) + '</td><td>' +
+        (k.kontrolle ? '<span class="gruen-t">✓ = Summe PKto</span>' : '<span class="rot-t">✗ weicht ab</span>') + '</td></tr>').join('') + '</tbody></table></div>';
+    const w = await App.formModal('OPOS-Liste (PDF) einlesen', [
+      { k: 'mindestSaldo', l: 'Konten mit Saldo unter … € nicht als Fall anlegen', t: 'money', d: 0.01 },
+      { k: 'pruefWV', l: 'für jeden neuen Fall eine WV „Fall prüfen“ für heute anlegen', t: 'checkbox', d: false, full: true },
+      { k: 'fehlendeErledigen', l: 'Fälle in diesen Objekten, die nicht mehr in der Liste stehen, als erledigt markieren', t: 'checkbox', d: true, full: true }
+    ], {}, { wide: true, ok: 'Einlesen', intro: '<p><b>' + K.length + '</b> Mieterkonten mit <b>' + K.reduce((a, k) => a + k.posten.length, 0) + '</b> offenen Posten, Saldo gesamt <b>' + fmtEUR(C.sum(K.filter(k => k.saldo > 0), k => k.saldo)) + '</b>' +
+      (K.some(k => k.saldo < 0) ? ' (' + K.filter(k => k.saldo < 0).length + ' Konten mit Guthaben)' : '') + '. Auswertung zum ' + fmtDatum(liste.stand) + (liste.druck ? ', gedruckt ' + fmtDatum(liste.druck) : '') + '.</p>' +
+      '<p class="small">' + (fehler.length ? '<span class="rot-t">Bei ' + fehler.length + ' Konten weicht die Summe der Posten von „Summe PKto“ ab – bitte dort prüfen.</span>' : '<span class="gruen-t">✓ Kontrolle: bei allen Konten ergibt die Summe der Posten genau „Summe PKto“.</span>') + '</p>' +
+      '<p class="small muted">Objekte: ' + objekte.map(esc).join(' · ') + '<br>Die Posten je Fall werden durch den Stand dieser Liste ersetzt (selbst erfasste Posten bleiben). Bekannte Mieter werden über Debitor-Nr., Name und Mietbeginn erkannt.</p>' + vorschau });
+    if (!w) return;
+    const st = C.importOposPdf(App.data, liste, w);
+    App.tab = 'opos'; App.detail = null; App.commit();
+    App.modal({ title: 'OPOS-Liste eingelesen (Stand ' + fmtDatum(liste.stand) + ')', body: '<ul><li><b>' + st.konten + '</b> Konten, ' + st.posten + ' Posten übernommen</li>' +
+      '<li>' + st.faelleNeu + ' neue Fälle, ' + st.aktualisiert + ' Fälle aktualisiert, ' + st.unveraendert + ' unverändert</li>' +
+      (st.mieterNeu ? '<li>' + st.mieterNeu + ' neue Mieter' + (st.objekteNeu ? ', ' + st.objekteNeu + ' neue Objekte' : '') + '</li>' : '') +
+      (st.erledigt ? '<li>' + st.erledigt + ' Fälle ausgeglichen/Guthaben → erledigt</li>' : '') + (st.guthaben + st.uebersprungen ? '<li>' + (st.guthaben + st.uebersprungen) + ' Konten ohne offenen Betrag (Guthaben/ausgeglichen) – kein Fall nötig</li>' : '') +
+      (st.kontrolleFehler.length ? '<li class="rot-t">Summenabweichung bei: ' + st.kontrolleFehler.map(esc).join(', ') + '</li>' : '') +
+      '</ul><p class="small muted">Im Fall siehst du jetzt jeden Posten mit Buchungstext, Fälligkeit und Tagen – ✉ Mahnen listet sie in der Mail auf.</p>' });
+  }
 
   async function importSaldenDialog(blatt, stand) {
     const eintraege = blatt.format === 'json' ? C.parseJsonBlatt(blatt.rows) : C.parseSaldenBlatt(blatt.rows, blatt.kopf, stand);
@@ -3131,17 +3370,21 @@ Mit freundlichen Grüßen
   }
 
   /* ---------- Mahnen per E-Mail (Outlook) ---------- */
+  function postenZeile(p) { return fmtDatum(p.faellig) + '   ' + p.bez + '   ' + fmtEUR(p.offen); }
   function mahnMail(f, v) {
     const vl = D.vorlage(App.data, 'mail_mahnung');
     const ctx = D.kontext(App.data, { vorlageId: 'mail_mahnung', bereich: 'opos', fall: f, frist: v.frist });
-    const mehrere = /,| und /.test(v.monate);
-    Object.assign(ctx, { monate: v.monate, fuerMonat: mehrere ? 'die Monate' : 'den Monat', betrag: fmtEUR(v.betrag), frist: fmtDatum(v.frist), abmahnungAbsatz: v.abmahnung ? vl.abmahnung || '' : '' });
+    const gew = (v.sel || []).map(id => f.posten.find(p => p.id === id)).filter(Boolean).sort((a, b) => (a.faellig || '').localeCompare(b.faellig || ''));
+    const betrag = C.sum(gew, p => p.offen);
+    const monate = C.monateText(gew) || v.monate || '';
+    Object.assign(ctx, { monate, fuerMonat: /,| und /.test(monate) ? 'die Monate' : 'den Monat', betrag: fmtEUR(betrag), frist: fmtDatum(v.frist),
+      postenListe: gew.map(postenZeile).join('\n'), abmahnungAbsatz: v.abmahnung ? vl.abmahnung || '' : '' });
     const body = C.vorlageZuText(vl.text, ctx).replace(/\n{3,}/g, '\n\n').trim() + '\n\n' + (App.data.settings.email.signatur || '');
-    return { betreff: C.vorlageZuText(vl.betreff, ctx), text: body };
+    return { betreff: C.vorlageZuText(vl.betreff, ctx), text: body, betrag, monate, anzahl: gew.length };
   }
   function mailOeffnen(to, betreff, text) {
     const E = App.data.settings.email;
-    try { navigator.clipboard.writeText(text); } catch (e) { /* ohne Zwischenablage */ }
+    try { navigator.clipboard.writeText(text).catch(() => { /* Zwischenablage nicht erlaubt */ }); } catch (e) { /* ohne Zwischenablage */ }
     if (E.methode === 'eml') {
       D.download(new Blob([C.buildEML({ to, cc: E.cc, subject: betreff, text, attachments: [] })], { type: 'message/rfc822' }), C.asciiDateiname('Mahnung ' + betreff.slice(0, 60)) + '.eml');
       return 'eml';
@@ -3153,24 +3396,24 @@ Mit freundlichen Grüßen
   }
   App.act.oposMahnenMail = async function (ds) {
     const f = H.fall('opos', ds.id); const m = H.mieter(f.mieterId) || {}; const S2 = App.data.settings;
-    const mieteOffen = C.offenSumme(f.posten, 'miete');
-    const werte = {
-      to: C.emailsZuMieter(App.data, m), monate: C.monateText(f.posten) || C.monatLabel(C.today().slice(0, 7)), betrag: mieteOffen > 0 ? mieteOffen : C.offenSumme(f.posten),
-      frist: C.addDays(C.today(), Number(S2.fristen.emailMahnung) || 7), abmahnung: S2.email.abmahnungStandard
-    };
+    const offenP = f.posten.filter(p => C.round2(p.offen) !== 0).sort((a, b) => (a.faellig || '').localeCompare(b.faellig || ''));
+    const werte = { to: C.emailsZuMieter(App.data, m), frist: C.addDays(C.today(), Number(S2.fristen.emailMahnung) || 7), abmahnung: S2.email.abmahnungStandard, sel: offenP.map(p => p.id) };
     let manuell = false;
     const v = await App.formModal('✉ Mahnen – ' + C.mieterName(m), [
       { k: 'to', l: 'Empfänger (E-Mail, mehrere mit ; trennen)', full: true, hint: m.email ? (m.emailQuelle === 'telefonliste' ? 'aus der Telefonliste' + (App.data.meta.telefonlisteStand ? ' vom ' + fmtDatum(App.data.meta.telefonlisteStand) : '') : '')
         : werte.to ? 'aus dem Adressbuch (Telefonliste)' : '<span class="rot-t">Keine E-Mail gefunden</span> – hier eintragen (wird beim Mieter gespeichert) oder Telefonliste unter Kontakte einlesen.' },
-      { k: 'monate', l: 'Miete für den Monat', req: true, hint: 'aus den offenen Mietposten' }, { k: 'betrag', l: 'in Höhe von (€)', t: 'money', req: true },
+      { k: 'sel', l: 'Diese Posten in die Mahnung aufnehmen' + (f.oposStand ? ' (Stand OPOS-Liste ' + fmtDatum(f.oposStand) + ')' : ''), t: 'multi', cls: 'liste',
+        o: offenP.map(p => [p.id, '<span class="nw">' + fmtDatum(p.faellig) + '</span> ' + esc(p.bez) + ' <small class="muted">' + (p.typ === 'miete' ? 'Miete' : p.offen < 0 ? 'Gutschrift' : 'Sonstiges') + '</small><b class="' + (p.offen < 0 ? 'gruen-t' : '') + '">' + fmtEUR(p.offen) + '</b>']),
+        hint: '<span id="mahnSumme"></span> <button type="button" class="s" data-alle="1">alle</button><button type="button" class="s" data-alle="miete">nur Miete</button><button type="button" class="s" data-alle="0">keine</button>' },
       { k: 'frist', l: 'zu zahlen bis', t: 'date', req: true }, { k: 'abmahnung', l: 'Abmahnung wegen verspäteter Zahlungen einfügen', t: 'checkbox' },
-      { k: 'html', t: 'html', html: '<label class="fld full"><span>Mail-Text (hier noch änderbar) <button type="button" class="s" id="mailNeu">↺ neu erzeugen</button></span><textarea name="mailText" id="mailText" rows="15"></textarea></label>' }
+      { k: 'html', t: 'html', html: '<label class="fld full"><span>Mail-Text (hier noch änderbar) <button type="button" class="s" id="mailNeu">↺ neu erzeugen</button></span><textarea name="mailText" id="mailText" rows="16"></textarea></label>' }
     ], werte, { wide: true, ok: '✉ In Outlook öffnen', onOpen(d) {
-      const form = d.querySelector('form'); const ta = d.querySelector('#mailText');
-      const upd = force => { if (manuell && !force) return; const x = App.collect(form); ta.value = mahnMail(f, x).text; manuell = false; };
+      const form = d.querySelector('form'); const ta = d.querySelector('#mailText'); const sum = d.querySelector('#mahnSumme');
+      const upd = force => { const x = App.collect(form); const mm = mahnMail(f, x); sum.innerHTML = 'Ausgewählt: ' + mm.anzahl + ' Posten, <b>' + fmtEUR(mm.betrag) + '</b>'; if (manuell && !force) return; ta.value = mm.text; manuell = false; };
       ta.addEventListener('input', () => { manuell = true; });
       form.addEventListener('change', e => { if (e.target !== ta) upd(); });
       form.addEventListener('input', e => { if (e.target !== ta && e.target.type !== 'checkbox') upd(); });
+      d.querySelectorAll('[data-alle]').forEach(b => { b.onclick = () => { d.querySelectorAll('input[name=sel]').forEach(c => { const p = f.posten.find(q => q.id === c.value); c.checked = b.dataset.alle === '1' || (b.dataset.alle === 'miete' && p && (p.typ === 'miete' || p.offen < 0)); }); upd(true); }; });
       d.querySelector('#mailNeu').onclick = () => upd(true);
       upd(true);
     } });
@@ -3184,7 +3427,7 @@ Mit freundlichen Grüßen
       : 'Outlook wird geöffnet (Text auch in der Zwischenablage).', 'ok', 9000);
     if (await App.confirm('Mahnung an ' + esc(v.to || 'den Mieter') + ' als versendet verbuchen?<br><small class="muted">Verlauf + WV „Zahlungseingang prüfen“ zum ' + fmtDatum(C.addDays(v.frist, Number(S2.puffer) || 0)) + '</small>', 'Ja, verbuchen', 'Nein')) {
       C.applyAction(App.data, 'opos', f.id, 'emailMahnung', { frist: v.frist, abmahnung: v.abmahnung,
-        verlaufText: 'Mahnung per E-Mail an ' + (v.to || '?') + ': Miete ' + v.monate + ', ' + fmtEUR(v.betrag) + ', Frist ' + fmtDatum(v.frist) + (v.abmahnung ? ' – inkl. Abmahnung (verspätete Zahlungen)' : '') });
+        verlaufText: 'Mahnung per E-Mail an ' + (v.to || '?') + ': ' + mail.anzahl + ' Posten, ' + fmtEUR(mail.betrag) + (mail.monate ? ' (Miete ' + mail.monate + ')' : '') + ', Frist ' + fmtDatum(v.frist) + (v.abmahnung ? ' – inkl. Abmahnung (verspätete Zahlungen)' : '') });
       App.commit(); App.toast('Verbucht – WV angelegt.');
     }
   };

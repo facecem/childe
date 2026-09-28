@@ -108,7 +108,7 @@
     switch (f.t) {
       case 'html': return '<div class="full">' + f.html + '</div>';
       case 'checkbox': return '<label class="chk' + (f.full ? ' full' : '') + '"><input type="checkbox" name="' + f.k + '"' + (val ? ' checked' : '') + '> ' + esc(f.l) + '</label>';
-      case 'multi': return '<div class="fld full"><span>' + esc(f.l) + '</span><div class="multi">' + f.o.map(([ov, ol]) =>
+      case 'multi': return '<div class="fld full"><span>' + esc(f.l) + '</span><div class="multi' + (f.cls ? ' ' + f.cls : '') + '">' + f.o.map(([ov, ol]) =>
         '<label class="chk"><input type="checkbox" data-multi name="' + f.k + '" value="' + esc(ov) + '"' + ((val || []).includes(ov) ? ' checked' : '') + '> ' + ol + '</label>').join('') + '</div>' + (f.hint ? '<small>' + f.hint + '</small>' : '') + '</div>';
       case 'select': inp = '<select name="' + f.k + '"' + req + '>' + f.o.map(([ov, ol]) => '<option value="' + esc(ov) + '"' + (String(ov) === String(val) ? ' selected' : '') + '>' + esc(ol) + '</option>').join('') + '</select>'; break;
       case 'textarea': inp = '<textarea name="' + f.k + '" rows="' + (f.rows || 4) + '"' + req + attr + '>' + esc(val) + '</textarea>'; break;
@@ -459,7 +459,7 @@
       const v = await formModal(m ? 'Mieter bearbeiten' : 'Neuer Mieter', App.mieterFelder(), m || { objektId: ds.objektId || App.f.stamm.objekt || '' }, { wide: true });
       if (!v) return null;
       delete v._action;
-      if (m) { Object.assign(m, v); App.commit(); return m; }
+      if (m) { if (v.gesamtmiete !== m.gesamtmiete) m.mieteGeschaetzt = false; Object.assign(m, v); App.commit(); return m; }
       const neu = Object.assign({ id: C.uid() }, v); App.data.mieter.push(neu); App.commit(); return neu;
     },
     async mieterDel(ds) {
