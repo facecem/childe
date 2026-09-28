@@ -186,6 +186,46 @@ eq(d.opos[0].posten.map(x => x.typ), ['miete', 'sonstig'], 'Typ aus Buchungstext
 st = C.importOPOS(d, rows.slice(1), map, '2026-09-28');
 eq([st.postenNeu, st.postenAktualisiert], [0, 0], 'Import idempotent');
 
+section('Import OPOS-Liste (Salden)');
+eq(C.parseMietzeit('01.03.25 - 31.07.26,'), { von: '2025-03-01', bis: '2026-07-31' }, 'Mietzeit von–bis');
+eq(C.parseMietzeit('15.12.23 -,'), { von: '2023-12-15', bis: '' }, 'Mietzeit offen');
+eq([C.parseSaldo(1234.5), C.parseSaldo('=16752.82-8376.41'), C.parseSaldo('7000 ca.'), C.parseSaldo('1400€ offen'), C.parseSaldo('=1922-255-510')], [1234.5, 8376.41, 7000, 1400, 1157], 'Saldo aus Zahl/Formel/Text');
+eq([C.parseWV('01.09', '2026-08-15'), C.parseWV('WV 30.09', '2026-09-01'), C.parseWV('05.01', '2026-12-20'), C.parseWV(2029, '2026-06-30'), C.parseWV('mahnen', '2026-06-30')],
+  ['2026-09-01', '2026-09-30', '2027-01-05', '', ''], 'WV-Angaben ohne Jahr');
+eq(C.nameAufteilen('MUSTERMANN, ERIKA'), { anrede: '', nachname: 'Mustermann', vorname: 'Erika' }, 'Name „NACHNAME, VORNAME“');
+eq(C.nameAufteilen('BEISPIEL BAU GMBH, HERR X').anrede, 'Firma', 'Firma erkannt');
+const jsonRows = ['[', '  {', '    "name": "MUSTERMANN, ERIKA BEISPIELHAFTWhg. 7 PFkt. 007 Mieter 01.03.25 -",', '    "saldo_zeile": "Summe PKto: 1.234,50"', '  },',
+  '  {', '"name": "MUSTERMANN, ERIKA BEISPIELHAFTWhg. 70 PFkt. 007 Mieter 01.03.25 -",', '"saldo_zeile": "Summe PKto: 100,00"', '},',
+  '{', '"name": "PROBE, PAUL Whg. 3 PFkt. 007 Mieter 01.01.20 - 31.05.26",', '"saldo_zeile": "Summe PKto: 50,00"', '}', ']'].map(x => [x]);
+eq(C.erkenneFormat(jsonRows).format, 'json', 'Format Rohdaten erkannt');
+const je = C.parseJsonBlatt(jsonRows);
+eq(je.map(e => [e.name, e.whg, e.pfkt, e.von, e.bis, e.saldo]), [['MUSTERMANN, ERIKA BEISPIELHAFT', 'Whg. 7', '007', '2025-03-01', '', 1234.5], ['MUSTERMANN, ERIKA BEISPIELHAFT', 'Whg. 70', '007', '2025-03-01', '', 100], ['PROBE, PAUL', 'Whg. 3', '007', '2020-01-01', '2026-05-31', 50]], 'Rohdaten zerlegt (Name klebt an „Whg.“)');
+const saldoRows = [['Name', 'Datum', 'Saldo', 'WV', null, 'gemahnt?'], ['MUSTERMANN, ERIKA BEISPIELHAFT', '01.03.25 -,', '=1500-165.5', '15.07', 'Rate angeboten', 'ja'], ['PROBE, PAUL', '01.01.20 - 31.05.26,', 50, null, null, null], ['NEU, NINA', '01.02.26 -,', 3, null, null, null]];
+const fs0 = C.erkenneFormat(saldoRows); eq([fs0.format, fs0.kopf], ['saldo', 0], 'Format Saldenliste erkannt');
+const se = C.parseSaldenBlatt(saldoRows, 0, '2026-06-30');
+eq([se[0].saldo, se[0].wv, se[0].notizen], [1334.5, ['2026-07-15'], ['Rate angeboten', 'gemahnt: ja']], 'Saldenliste: Formel, WV, Notizen');
+d = C.emptyData();
+st = C.importSalden(d, je, { stand: '2026-06-30', heute: '2026-07-01' });
+eq([st.mieterNeu, st.faelleNeu, st.objekteNeu], [2, 2, 1], 'Rohdaten: Konten je Mieter zusammengefasst');
+const fMu = d.opos.find(f => d.mieter.find(m => m.id === f.mieterId).nachname === 'Mustermann');
+eq([C.offenSumme(fMu.posten), d.mieter[0].whg, d.mieter[0].vorname], [1334.5, 'Whg. 7, Whg. 70', 'Erika Beispielhaft'], 'Saldo summiert, Wohnungen gesammelt');
+st = C.importSalden(d, se, { stand: '2026-06-30', blatt: 'Juni', heute: '2026-07-01', mindestSaldo: 10 });
+eq([st.mieterNeu, st.unveraendert, st.uebersprungen, st.wvNeu], [0, 2, 1, 1], 'Saldenliste erkennt Mieter aus Rohdaten, Kleinstbetrag übersprungen');
+eq(fMu.notiz, '[30.06.2026 · Juni] Rate angeboten\n[30.06.2026 · Juni] gemahnt: ja', 'Notizen übernommen');
+st = C.importSalden(d, se, { stand: '2026-06-30', blatt: 'Juni', heute: '2026-07-01', mindestSaldo: 10 });
+eq([st.wvNeu, fMu.notiz.split('\n').length], [0, 2], 'erneutes Einlesen: keine doppelten WV/Notizen');
+const se2 = C.parseSaldenBlatt([saldoRows[0], ['MUSTERMANN, ERIKA BEISPIELHAFT', '01.03.25 -,', 900, null, null, null]], 0, '2026-07-31');
+st = C.importSalden(d, se2, { stand: '2026-07-31', heute: '2026-08-01', fehlendeErledigen: true });
+eq([st.aktualisiert, st.erledigt, C.offenSumme(fMu.posten)], [1, 1, 900], 'Folgemonat: Saldo aktualisiert, fehlender Fall erledigt');
+truthy(d.verlauf.some(v => v.refId === fMu.id && /1\.334,50 € → 900,00 €/.test(v.text)), 'Saldo-Änderung im Verlauf');
+fMu.posten.push({ id: 'x', bez: 'Miete 07/2026', faellig: '2026-07-03', typ: 'miete', betrag: 400, offen: 400 }); C.saldoAbgleich(fMu);
+eq(C.offenSumme(fMu.posten), 900, 'Einzelposten + Saldo-Posten = Listensaldo');
+truthy(/Saldo der OPOS-Liste/.test(C.kuendigungsCheck(fMu.posten, 400).text), 'Kündigungscheck weist auf Saldo ohne Aufschlüsselung hin');
+const postenRows = [['Hier die offenen Forderungen aus der OPOS-Liste für Mustermann, Erika (Whg. 7):'], ['Datum', 'Buchungstext', 'Betrag (€)', 'Fälligkeit'], [new Date(2026, 5, 1), 'Diff. Grundmiete', 170, new Date(2026, 5, 1)], [new Date(2026, 0, 1), 'BK-Abrechnung 2025', 80, new Date(2026, 0, 15)]];
+const fp = C.erkenneFormat(postenRows); eq([fp.format, fp.kopf], ['posten', 1], 'Format Einzelposten mit Titelzeile');
+eq(C.titelMieter(postenRows, 1), { name: 'Mustermann, Erika', whg: 'Whg. 7' }, 'Mieter aus Titelzeile');
+eq(C.guessMapping(postenRows[1]), { bez: 1, faellig: 3, betrag: 2 }, 'Fälligkeit vor Datum bevorzugt');
+
 section('Migration Prototyp');
 const alt = { settings: { firma: 'HV Alt', email: 'a@b.de' }, faelle: [{ name: 'Erika Mustermann', objekt: 'Haus B', miete: '750,00', stufe: '1. Mahnung', wv: '2026-10-01', posten: [{ bezeichnung: 'Miete 09/2026', datum: '03.09.2026', betrag: '750,00' }], verlauf: [{ datum: '2026-09-10', text: 'Erinnerung raus' }] }] };
 const mig = C.normalize(C.migratePrototype(alt));

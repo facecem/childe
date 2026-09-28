@@ -32,7 +32,7 @@
         '<input type="search" id="oposQ" data-filter="opos.q" placeholder="Mieter, Objekt, Mietnr. …" value="' + esc(f.q) + '">' +
         '<select data-filter="opos.stufe"><option value="aktiv"' + (f.stufe === 'aktiv' ? ' selected' : '') + '>aktive Fälle</option><option value=""' + (f.stufe === '' ? ' selected' : '') + '>alle</option>' +
         C.STUFEN_REIHE.map(s => '<option value="' + s + '"' + (f.stufe === s ? ' selected' : '') + '>' + S[s] + '</option>').join('') + '</select>' +
-        '<span class="sp"></span><button data-act="oposImport">⇪ Import Excel/CSV</button><button data-act="oposExcel">Export Excel</button>' +
+        '<span class="sp"></span><button data-act="oposImport">⇪ OPOS-Liste einlesen</button><button data-act="oposExcel">Export Excel</button>' +
         '<button data-act="mahnlauf"' + (sel.length ? '' : ' disabled title="Fälle per Häkchen auswählen"') + '>Mahnlauf (' + sel.length + ')</button><button class="primary" data-act="oposNeu">+ Neuer Fall</button></div>' +
         (list.length ? '<table class="tbl"><thead><tr><th><input type="checkbox" data-change="oposSelAll"' + (sel.length && sel.length === list.length ? ' checked' : '') + ' title="alle"></th><th>Mieter</th><th>Objekt / Whg</th><th>Stufe</th>' +
           '<th class="r">offen Miete</th><th class="r">offen gesamt</th><th>älteste Fäll.</th><th>nächste WV</th><th>Prüfhinweis</th></tr></thead><tbody>' +
@@ -40,7 +40,7 @@
             const m = H.mieter(x.mieterId) || {}; const o = H.objekt(m.objektId);
             return '<tr class="klick" data-act="openFall" data-b="opos" data-id="' + x.id + '"><td data-stop><input type="checkbox" data-change="oposSel" data-id="' + x.id + '"' + (f.sel[x.id] ? ' checked' : '') + '></td>' +
               '<td><b>' + esc(C.mieterName(m)) + '</b>' + (m.mietnr ? ' <small class="muted">' + esc(m.mietnr) + '</small>' : '') + '</td><td>' + esc(o ? o.bezeichnung : '–') + (m.whg ? ' · ' + esc(m.whg) : '') + '</td>' +
-              '<td>' + stufeChip(x.stufe) + (x.raten && x.raten.some(r => !r.bezahlt) ? ' ' + H.chip('Raten', 'blau') : '') + '</td><td class="r">' + fmtEUR(C.offenSumme(x.posten, 'miete')) + '</td><td class="r"><b>' + fmtEUR(offen) + '</b></td>' +
+              '<td>' + stufeChip(x.stufe) + (m.mietende && m.mietende < C.today() ? ' ' + H.chip('ehemalig') : '') + (x.raten && x.raten.some(r => !r.bezahlt) ? ' ' + H.chip('Raten', 'blau') : '') + '</td><td class="r">' + fmtEUR(C.offenSumme(x.posten, 'miete')) + '</td><td class="r"><b>' + fmtEUR(offen) + '</b></td>' +
               '<td>' + fmtDatum(aeltesteFaelligkeit(x)) + '</td><td>' + H.wvChip(wv) + '</td><td>' + (check.moeglich && x.stufe !== 'erledigt' ? H.chip('⚠ Kündigung mögl.', 'rot') : '') + '</td></tr>';
           }).join('') + '</tbody><tfoot><tr><td></td><td colspan="4">' + list.length + ' Fälle</td><td class="r"><b>' + fmtEUR(summe) + '</b></td><td colspan="3"></td></tr></tfoot></table>'
           : H.leer('Keine Fälle. Legen Sie einen Fall an oder importieren Sie die OPOS-Liste aus Ihrer Verwaltungssoftware.')) + '</section>';
@@ -274,33 +274,109 @@
       await D.excel('OPOS ' + C.today(), [{ name: 'Offene Posten', kopf: ['Mietnr', 'Mieter', 'Objekt', 'Whg', 'Stufe', 'Bezeichnung', 'Fällig', 'Typ', 'Betrag', 'Offen', 'nächste WV', 'Aufgabe'], zeilen }]);
     },
     async oposImport() {
-      const v = await App.formModal('OPOS-Liste importieren', [{ k: 'datei', l: 'Datei (Excel .xlsx/.xls oder CSV)', t: 'file', accept: '.xlsx,.xls,.csv,.txt,.ods', full: true }], {},
-        { ok: 'Weiter', intro: '<p class="muted">Export der offenen Posten aus der Verwaltungssoftware. Im nächsten Schritt ordnen Sie die Spalten zu. Bestehende Posten werden erkannt und nur aktualisiert.</p>' });
+      const v = await App.formModal('OPOS-Liste einlesen', [
+        { k: 'datei', l: 'Datei (Excel .xlsx/.xls oder CSV)', t: 'file', accept: '.xlsx,.xlsm,.xls,.ods,.csv,.txt', full: true },
+        { k: 'stand', l: 'Stand der Liste (Stichtag)', t: 'date', d: C.today(), req: true }], {},
+        { ok: 'Weiter', intro: '<p class="muted">Erkannt werden automatisch:</p><ul class="small muted"><li><b>Saldenliste</b> je Mieter (Spalten Name · Datum · Saldo, dazu WV- und Notizspalten)</li>' +
+          '<li><b>Rohdaten</b> aus der Verwaltungssoftware (<code>"name": "… Whg. … PFkt. … Mieter …"</code> / <code>"saldo_zeile": "Summe PKto: …"</code>)</li>' +
+          '<li><b>Einzelposten</b> (Datum · Buchungstext · Betrag · Fälligkeit), z. B. für einen Mieter</li></ul><p class="small muted">Monatlich erneut einlesen: Salden werden abgeglichen, nichts wird doppelt angelegt.</p>' });
       if (!v || !v.datei[0]) return;
-      let rows;
-      try { rows = await D.leseTabelle(v.datei[0]); } catch (e) { return App.toast('Datei konnte nicht gelesen werden: ' + e.message + (/xlsx/i.test(e.message) ? ' – offline bitte als CSV speichern.' : ''), 'err', 8000); }
-      if (!rows.length) return App.toast('Die Datei enthält keine Daten.', 'warn');
-      const kopf = rows[0].map((h, i) => String(h || 'Spalte ' + (i + 1)));
-      const map = C.guessMapping(kopf);
-      const opt = [['', '– nicht vorhanden –'], ...kopf.map((h, i) => [String(i), (i + 1) + ': ' + h])];
-      const vorschau = '<div class="scrollx"><table class="tbl small"><thead><tr>' + kopf.map(h => '<th>' + esc(h) + '</th>').join('') + '</tr></thead><tbody>' +
-        rows.slice(1, 6).map(r => '<tr>' + kopf.map((h, i) => '<td>' + esc(r[i]) + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>';
-      const felder = Object.entries(C.IMPORT_FELDER).map(([k, x]) => ({ k: 'm_' + k, l: x.label, t: 'select', o: opt }));
-      const vals = {}; Object.keys(map).forEach(k => { vals['m_' + k] = String(map[k]); });
-      const w = await App.formModal('Spalten zuordnen', [{ k: 'kopf', l: 'Erste Zeile ist Kopfzeile', t: 'checkbox', d: true, full: true }, ...felder], vals,
-        { wide: true, ok: 'Importieren', intro: '<p class="muted">' + (rows.length - 1) + ' Datenzeilen. Pflicht: Mieternummer oder Name sowie offener Betrag (oder Betrag).</p>' + vorschau });
-      if (!w) return;
-      const mapping = {}; Object.keys(C.IMPORT_FELDER).forEach(k => { if (w['m_' + k] !== '') mapping[k] = +w['m_' + k]; });
-      if (mapping.offen == null && mapping.betrag == null) return App.toast('Bitte eine Betragsspalte zuordnen.', 'err');
-      if (mapping.mietnr == null && mapping.name == null && mapping.nachname == null) return App.toast('Bitte Mieternummer oder Name zuordnen.', 'err');
-      const vorher = new Set(App.data.opos.map(f => f.id));
-      const st = C.importOPOS(App.data, w.kopf ? rows.slice(1) : rows, mapping);
-      App.data.opos.filter(f => !vorher.has(f.id)).forEach(f => C.createWV(App.data, 'opos', f.id, C.today(), 'Importierten Fall prüfen – Zahlungserinnerung versenden?', { regel: 'opos:neu' }));
-      App.commit();
-      App.modal({ title: 'Import abgeschlossen', body: '<ul><li>' + st.faelleNeu + ' neue Fälle</li><li>' + st.postenNeu + ' neue Posten</li><li>' + st.postenAktualisiert + ' Posten aktualisiert</li><li>' +
-        st.mieterNeu + ' neue Mieter' + (st.mieterNeu ? ' <small class="muted">(bitte Monatsmiete, Anschrift und E-Mail in den Stammdaten ergänzen)</small>' : '') + '</li><li>' + st.objekteNeu + ' neue Objekte</li><li>' + st.uebersprungen + ' Zeilen übersprungen (kein offener Betrag / kein Mieter)</li></ul>' });
+      let blaetter;
+      try { blaetter = await D.leseArbeitsmappe(v.datei[0]); }
+      catch (e) { return App.toast('Datei konnte nicht gelesen werden: ' + e.message + (/xlsx/i.test(e.message) ? ' – ohne Internet bitte als CSV speichern.' : ''), 'err', 9000); }
+      blaetter = blaetter.filter(b => b.rows.length).map(b => {
+        const f = C.erkenneFormat(b.rows);
+        let info = '', anzahl = 0, summe = 0;
+        if (f.format === 'json') { const e = C.parseJsonBlatt(b.rows); anzahl = e.length; summe = C.sum(e, x => x.saldo); info = anzahl + ' Konten (Rohdaten)'; }
+        else if (f.format === 'saldo') { const e = C.parseSaldenBlatt(b.rows, f.kopf, v.stand); anzahl = e.length; summe = C.sum(e, x => x.saldo); info = anzahl + ' Mieter (Saldenliste)'; }
+        else if (f.format === 'posten') { anzahl = b.rows.length - f.kopf - 1; info = anzahl + ' Einzelposten'; }
+        else info = 'Format nicht erkannt – Spalten selbst zuordnen';
+        return Object.assign(b, f, { info: info + (summe ? ', Summe ' + fmtEUR(summe) : ''), anzahl });
+      });
+      if (!blaetter.length) return App.toast('Die Datei enthält keine Daten.', 'warn');
+      const vorschlag = blaetter.find(b => b.format === 'json' || b.format === 'saldo') || blaetter.find(b => b.format !== 'unbekannt') || blaetter[0];
+      let blatt = vorschlag;
+      if (blaetter.length > 1) {
+        const w = await App.formModal('Blatt auswählen', [{ k: 'blatt', l: 'Tabellenblatt', t: 'select', full: true, o: blaetter.map((b, i) => [String(i), b.name + ' – ' + b.info]) }],
+          { blatt: String(blaetter.indexOf(vorschlag)) }, { ok: 'Weiter', intro: '<p class="muted">Die Datei enthält ' + blaetter.length + ' Blätter. Welches soll eingelesen werden?</p>' });
+        if (!w) return; blatt = blaetter[+w.blatt];
+      }
+      if (blatt.format === 'json' || blatt.format === 'saldo') return importSaldenDialog(blatt, v.stand);
+      return importPostenDialog(blatt);
     }
   });
+
+  async function importSaldenDialog(blatt, stand) {
+    const eintraege = blatt.format === 'json' ? C.parseJsonBlatt(blatt.rows) : C.parseSaldenBlatt(blatt.rows, blatt.kopf, stand);
+    const ehem = eintraege.filter(e => e.aktiv === false || (e.bis && e.bis < stand)).length;
+    const vorschau = '<div class="scrollx"><table class="tbl small"><thead><tr><th>Name</th><th>Whg</th><th>Mietzeit</th><th class="r">Saldo</th><th>WV</th><th>Notizen</th></tr></thead><tbody>' +
+      eintraege.slice(0, 8).map(e => '<tr><td>' + esc(e.name) + '</td><td>' + esc(e.whg) + '</td><td class="nw">' + fmtDatum(e.von) + ' – ' + fmtDatum(e.bis) + '</td><td class="r">' + fmtEUR(e.saldo) + '</td>' +
+        '<td>' + e.wv.map(fmtDatum).join(', ') + '</td><td class="small">' + esc(e.notizen.join(' · ').slice(0, 90)) + '</td></tr>').join('') + '</tbody></table></div>';
+    const hatSaldoPosten = App.data.opos.some(f => f.stufe !== 'erledigt' && f.posten.some(p => p.saldo));
+    const w = await App.formModal('Saldenliste einlesen – ' + blatt.name, [
+      { k: 'objektId', l: 'Objekt für neue Mieter', t: 'select', o: [['', blatt.format === 'json' ? 'automatisch (aus PFkt.-Nummer)' : 'automatisch („Import OPOS-Liste“)'], ...H.objektOptionen(false)] },
+      { k: 'mindestSaldo', l: 'Salden unter … € ignorieren', t: 'money', d: 0.01, hint: 'z. B. 10 für Cent-/Kleinstbeträge' },
+      { k: 'ehemalige', l: 'ehemalige Mieter übernehmen (' + ehem + ' in der Liste)', t: 'checkbox', d: true, full: true },
+      { k: 'notizen', l: 'Notizspalten in die Fall-Notiz übernehmen', t: 'checkbox', d: true, full: true },
+      { k: 'wv', l: 'WV-Daten aus der Liste als Wiedervorlagen anlegen', t: 'checkbox', d: true, full: true },
+      { k: 'pruefWV', l: 'für jeden neuen Fall eine WV „Fall prüfen“ für heute anlegen', t: 'checkbox', d: false, full: true },
+      { k: 'fehlendeErledigen', l: 'Fälle, die nicht mehr in dieser Liste stehen, als erledigt markieren (nur bei vollständiger Liste!)', t: 'checkbox', d: false, full: true }
+    ], {}, { wide: true, ok: 'Einlesen', intro: '<p>' + eintraege.length + ' Einträge, Summe <b>' + fmtEUR(C.sum(eintraege, e => e.saldo)) + '</b>, Stand ' + fmtDatum(stand) + '.' +
+      (hatSaldoPosten ? ' Bereits eingelesene Mieter werden erkannt und ihr Saldo aktualisiert.' : '') + ' Mehrere Konten eines Mieters (z. B. Wohnung + Stellplatz) werden zusammengefasst.</p>' + vorschau });
+    if (!w) return;
+    const st = C.importSalden(App.data, eintraege, Object.assign({}, w, { stand, blatt: blatt.name }));
+    App.tab = 'opos'; App.detail = null; App.commit();
+    App.modal({ title: 'Einlesen abgeschlossen', body: '<ul><li><b>' + st.faelleNeu + '</b> neue Fälle, <b>' + st.mieterNeu + '</b> neue Mieter' + (st.objekteNeu ? ', ' + st.objekteNeu + ' neue Objekte' : '') + '</li>' +
+      '<li><b>' + st.aktualisiert + '</b> Salden geändert (siehe Verlauf je Fall), ' + st.unveraendert + ' unverändert</li>' +
+      (st.erledigt ? '<li><b>' + st.erledigt + '</b> Fälle ausgeglichen → erledigt</li>' : '') + (st.wvNeu ? '<li>' + st.wvNeu + ' Wiedervorlagen aus der Liste angelegt</li>' : '') +
+      '<li>' + st.uebersprungen + ' übersprungen</li><li>Summe eingelesen: ' + fmtEUR(st.summe) + '</li></ul>' +
+      '<p class="small muted">Der Saldo steht je Fall als Posten „Saldo lt. OPOS-Liste“. Für Kündigungscheck und Mahnschreiben mit Postenaufstellung die Einzelposten einlesen oder erfassen. ' +
+      (st.mieterNeu ? 'Bei neuen Mietern bitte Anschrift, E-Mail und Monatsmiete in den Stammdaten ergänzen.' : '') + '</p>' });
+  }
+
+  async function importPostenDialog(blatt) {
+    const rows = blatt.rows; const k0 = Math.max(0, blatt.kopf || 0);
+    const kopf = rows[k0].map((h, i) => String(h == null || h === '' ? 'Spalte ' + (i + 1) : h));
+    const map = C.guessMapping(kopf);
+    const titel = C.titelMieter(rows, k0);
+    let mieterVorschlag = '';
+    if (titel) {
+      const nn = C.normName(titel.name);
+      const m = App.data.mieter.find(x => C.normName(x.importName || '') === nn || C.normName(x.nachname + ', ' + x.vorname) === nn || C.normName(x.vorname + ' ' + x.nachname) === nn);
+      if (m) mieterVorschlag = m.id;
+    }
+    const opt = [['', '– nicht vorhanden –'], ...kopf.map((h, i) => [String(i), (i + 1) + ': ' + h])];
+    const zelle = c => (c instanceof Date ? fmtDatum(C.parseDatum(c)) : c);
+    const vorschau = '<div class="scrollx"><table class="tbl small"><thead><tr>' + kopf.map(h => '<th>' + esc(h) + '</th>').join('') + '</tr></thead><tbody>' +
+      rows.slice(k0 + 1, k0 + 6).map(r => '<tr>' + kopf.map((h, i) => '<td>' + esc(zelle(r[i])) + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>';
+    const felder = Object.entries(C.IMPORT_FELDER).map(([k, x]) => ({ k: 'm_' + k, l: x.label, t: 'select', o: opt }));
+    const vals = { mieterId: mieterVorschlag, kopfZeile: String(k0 + 1) }; Object.keys(map).forEach(k => { vals['m_' + k] = String(map[k]); });
+    const w = await App.formModal('Einzelposten einlesen – ' + blatt.name, [
+      { k: 'mieterId', l: 'Alle Zeilen gehören zu Mieter (wenn keine Namensspalte)', t: 'select', full: true,
+        o: [['', '– aus Spalten (Name/Mieternr.) –'], ...(titel && !mieterVorschlag ? [['neu', 'Neu anlegen: ' + titel.name + ' (' + titel.whg + ')']] : []), ...H.mieterOptionen(false)],
+        hint: titel ? 'Titelzeile erkannt: „' + esc(titel.name) + ' (' + esc(titel.whg) + ')“' : '' },
+      { k: 'kopfZeile', l: 'Kopfzeile ist Zeile Nr.', t: 'number', min: 1 }, ...felder], vals,
+    { wide: true, ok: 'Einlesen', intro: '<p class="muted">' + (rows.length - k0 - 1) + ' Datenzeilen. Pflicht: Betrag sowie Mieter (Spalte oder Auswahl oben). Bereits vorhandene Posten werden erkannt.</p>' + vorschau });
+    if (!w) return;
+    const mapping = {}; Object.keys(C.IMPORT_FELDER).forEach(k => { if (w['m_' + k] !== '') mapping[k] = +w['m_' + k]; });
+    if (mapping.offen == null && mapping.betrag == null) return App.toast('Bitte eine Betragsspalte zuordnen.', 'err');
+    let mieterId = w.mieterId;
+    if (mieterId === 'neu') {
+      const m = Object.assign({ id: C.uid(), objektId: (App.data.objekte[0] || {}).id || '', whg: titel.whg, anschrift: '', email: '', tel: '', mietnr: '', gesamtmiete: 0, mietbeginn: '', mietende: '', kaution: 0, importName: titel.name }, C.nameAufteilen(titel.name));
+      App.data.mieter.push(m); mieterId = m.id;
+    }
+    if (!mieterId && mapping.mietnr == null && mapping.name == null && mapping.nachname == null) return App.toast('Bitte Mieter auswählen oder Namens-/Mieternummernspalte zuordnen.', 'err');
+    const vorher = new Set(App.data.opos.map(f => f.id));
+    const start = Math.max(1, +w.kopfZeile || 1);
+    const st = C.importOPOS(App.data, rows.slice(start), mapping, C.today(), { mieterId });
+    App.data.opos.filter(f => !vorher.has(f.id)).forEach(f => C.createWV(App.data, 'opos', f.id, C.today(), 'Importierten Fall prüfen – Zahlungserinnerung versenden?', { regel: 'opos:neu' }));
+    const fall = mieterId && App.data.opos.find(f => f.mieterId === mieterId && f.stufe !== 'erledigt');
+    if (fall) { App.tab = 'opos'; App.detail = fall.id; }
+    App.commit();
+    App.modal({ title: 'Einlesen abgeschlossen', body: '<ul><li>' + st.faelleNeu + ' neue Fälle</li><li>' + st.postenNeu + ' neue Posten</li><li>' + st.postenAktualisiert + ' Posten aktualisiert</li><li>' +
+      st.mieterNeu + ' neue Mieter' + (st.mieterNeu ? ' <small class="muted">(bitte Monatsmiete, Anschrift und E-Mail in den Stammdaten ergänzen)</small>' : '') + '</li><li>' + st.uebersprungen + ' Zeilen übersprungen (kein offener Betrag / kein Mieter)</li></ul>' +
+      (fall && fall.posten.some(p => p.saldo) ? '<p class="small muted">Der Fall hat zusätzlich einen Saldo aus der OPOS-Liste: Der Saldo-Posten wurde um die Einzelposten reduziert, die Summe offen bleibt gleich dem Listensaldo.</p>' : '') });
+  }
 
   function mietenAnlegen(f, ab, anzahl, betrag) {
     for (let i = 0; i < anzahl; i++) {

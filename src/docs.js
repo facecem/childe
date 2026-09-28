@@ -588,17 +588,18 @@ Mit freundlichen Grüßen
       return 'csv';
     }
   }
-  async function leseTabelle(file) {
-    if (/\.(xlsx|xls|ods)$/i.test(file.name)) {
+  /** Alle Blätter einer Excel-Datei (Rohwerte, Datumswerte als Date) bzw. eine CSV → [{ name, rows }] */
+  async function leseArbeitsmappe(file) {
+    const leer = r => r.some(c => c != null && String(c).trim() !== '');
+    if (/\.(xlsx|xlsm|xlsb|xls|ods)$/i.test(file.name)) {
       const X = await loadLib('xlsx', 'XLSX');
       const wb = X.read(await file.arrayBuffer(), { type: 'array', cellDates: true });
-      const rows = X.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: false, dateNF: 'dd.mm.yyyy', defval: '' });
-      return rows.filter(r => r.some(c => String(c).trim() !== ''));
+      return wb.SheetNames.map(n => ({ name: n, rows: X.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: null }).filter(leer) }));
     }
     const buf = await file.arrayBuffer();
     let text = new TextDecoder('utf-8').decode(buf);
-    if (text.includes('�')) text = new TextDecoder('windows-1252').decode(buf);
-    return C.parseCSV(text);
+    if (text.includes('\ufffd')) text = new TextDecoder('windows-1252').decode(buf);
+    return [{ name: file.name, rows: C.parseCSV(text) }];
   }
   async function png(el, name) {
     const h2c = await loadLib('html2canvas', 'html2canvas');
@@ -606,5 +607,5 @@ Mit freundlichen Grüßen
     canvas.toBlob(b => download(b, C.asciiDateiname(name) + '.png'));
   }
 
-  root.Docs = { STANDARD, PLATZHALTER, BRIEF_CSS, vorlage, kontext, erzeuge, briefHTML, standalone, download, drucken, word, pdf, pdfBlob, emailEntwurf, emailOhneAnhang, excel, leseTabelle, png, loadLib, tabelle };
+  root.Docs = { STANDARD, PLATZHALTER, BRIEF_CSS, vorlage, kontext, erzeuge, briefHTML, standalone, download, drucken, word, pdf, pdfBlob, emailEntwurf, emailOhneAnhang, excel, leseArbeitsmappe, png, loadLib, tabelle };
 })(window);

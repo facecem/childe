@@ -21,12 +21,25 @@ Daten aus dem Prototyp (`opos_assistent_v1`) werden beim ersten Start automatisc
 | Bereich | Inhalt |
 |---|---|
 | **Dashboard** | Kacheln für überfällige WV, heute, 7 Tage, je Bereich, Rückstand gesamt und Kautionen mit Verjährung < 30 Tage. Eine WV-Liste über alle Bereiche, filterbar nach Zeitraum, Bereich und Objekt, mit +3/+7/+14, „erledigt“ und „erledigt + neue WV“. Tagesliste drucken, WV-Liste als Excel |
-| **OPOS** | Stufen Neu → Zahlungserinnerung → 1. Mahnung → Letzte Mahnung → Kündigung → Anwalt → Erledigt, dazu Abmahnung als Nebenpfad. Kündigungscheck nach § 543 Abs. 2 S. 1 Nr. 3 BGB (Prüfhinweis). Zahlungen werden auf die ältesten Posten zuerst verrechnet. Ratenzahlung mit einer WV je Rate. **Mahnlauf** für mehrere Fälle auf einmal. **Import** der OPOS-Liste aus Excel/CSV mit Spalten-Zuordnung |
+| **OPOS** | Stufen Neu → Zahlungserinnerung → 1. Mahnung → Letzte Mahnung → Kündigung → Anwalt → Erledigt, dazu Abmahnung als Nebenpfad. Kündigungscheck nach § 543 Abs. 2 S. 1 Nr. 3 BGB (Prüfhinweis). Zahlungen werden auf die ältesten Posten zuerst verrechnet. Ratenzahlung mit einer WV je Rate. **Mahnlauf** für mehrere Fälle auf einmal. **OPOS-Liste einlesen** (siehe unten) |
 | **Instandhaltung** | Schadensaufnahme mit Fotos (Drag & Drop, komprimiert). Anfrage an bis zu 3 Handwerker, je ein E-Mail-Entwurf mit Fotos. Angebotsvergleich, Auftrag, Terminankündigung nach § 555a BGB, Rechnung, Weiterbelastung an den Mieter (landet auf Wunsch direkt als offener Posten im OPOS). Liste als Excel (ein Blatt je Objekt) oder PNG |
 | **Kaution** | Rechner: Kaution + Zinsen − Einbehalte − NK-Einbehalt = Auszahlung. Fristen-Ampel und Verjährung nach § 548 BGB. Schreiben: Abrechnung, Anforderung der Bankverbindung, Teilauszahlung. Auszahlungsliste als Excel für die Buchhaltung |
 | **Schreiben** | Briefrahmen nach DIN 5008, Calibri 11 pt. Vorschau ist direkt bearbeitbar. Export als PDF, Word, Druck oder **PDF + E-Mail-Entwurf** (`.eml` mit `X-Unsent: 1`, öffnet in Outlook als Entwurf). Ohne Internet: Word + `mailto:` + Text in der Zwischenablage. Danach fragt das Tool „als versendet verbuchen?“ und legt Verlauf und WV an |
 | **Vorlagen** | Alle Textbausteine sind unter Einstellungen editierbar (Platzhalter wie `{{mieter.nachname}}`, `{{frist}}`, `{{postenTabelle}}`), mit Live-Vorschau und „auf Standard zurücksetzen“ |
 | **Komfort** | Globale Suche (<kbd>Strg</kbd>+<kbd>K</kbd> oder <kbd>/</kbd>), <kbd>Alt</kbd>+<kbd>1</kbd>…<kbd>7</kbd> für die Bereiche, <kbd>Alt</kbd>+<kbd>N</kbd> für einen neuen Eintrag, <kbd>Esc</kbd> für zurück |
+
+### OPOS-Liste einlesen
+
+OPOS → **⇪ OPOS-Liste einlesen**. Die Excel-Datei auswählen, den Stichtag angeben und das Tabellenblatt wählen. Das Format erkennt das Tool selbst:
+
+| Format | Aussehen | Ergebnis |
+|---|---|---|
+| **Rohdaten** aus der Verwaltungssoftware | `"name": "NAME Whg. 1 PFkt. 007 Mieter 01.03.25 -"`, `"saldo_zeile": "Summe PKto: 1.234,56"` | je Mieter ein Fall mit dem Saldo. Wohnung und Mietzeit werden übernommen, mehrere Konten (Wohnung + Stellplatz) zusammengefasst |
+| **Saldenliste** | Spalten `Name` · `Datum` (Mietzeit „01.03.25 - 31.07.26,“) · `Saldo`, optional `WV`, `Aktiv` und beliebige Notizspalten | wie oben. WV-Daten (auch „01.09“ oder „WV 30.09“) werden zu Wiedervorlagen, Notizspalten zur Fall-Notiz. Formeln wie `=1500-200` werden ausgerechnet |
+| **Einzelposten** | `Datum` · `Buchungstext` · `Betrag` · `Fälligkeit`, optional mit Titelzeile „… für NAME (Whg. 12):“ | Einzelposten für einen Mieter. Miete oder Sonstiges wird am Buchungstext erkannt. Danach funktionieren Kündigungscheck und die Postentabelle in Mahnungen |
+
+Die Liste kann **jeden Monat erneut eingelesen** werden. Bekannte Mieter werden am Namen und Mietbeginn erkannt, auch wenn der Name auf 30 Zeichen abgeschnitten ist. Geänderte Salden landen mit Differenz im Verlauf. WV und Notizen werden nicht doppelt angelegt. Wer möchte, lässt Fälle, die nicht mehr in der Liste stehen, automatisch als erledigt markieren.
+Ein Saldo ist nicht nach Miete und Sonstigem aufgeschlüsselt. Er zählt deshalb nicht für den Kündigungscheck, bis die Einzelposten eingelesen sind.
 
 ### WV-Regeln (Kernstück)
 
@@ -51,7 +64,7 @@ Eine neue Aktion schließt die vorherigen automatischen WV des Falls. Manuelle W
 
 ```bash
 node build.js    # bündelt src/ → dist/Verwaltungs-Assistent.html (keine Abhängigkeiten)
-node tests.js    # Unit-Tests: Datum/Werktag/Feiertage, Kündigungscheck, Kaution, Zahlungsverteilung, WV-Engine, Import, Migration
+node tests.js    # Unit-Tests: Datum/Werktag/Feiertage, Kündigungscheck, Kaution, Zahlungsverteilung, WV-Engine, OPOS-Import, Migration
 ```
 
 ```
@@ -70,7 +83,7 @@ Nach jeder Änderung in `src/` einmal `node build.js` ausführen und `dist/` mit
 
 Das Tool deckt alle fünf Punkte schon ab, sie brauchen aber noch deine Angaben oder Entscheidung:
 
-1. **Export der OPOS-Liste:** Der Import erkennt gängige Spaltennamen automatisch, jede andere Spalte lässt sich im Dialog zuordnen. Sobald ein Beispielexport vorliegt, können wir das Mapping fest hinterlegen.
+1. **Export der OPOS-Liste:** erledigt. Rohdaten („PFkt.“/„Summe PKto“), Saldenlisten und Einzelposten werden automatisch erkannt (siehe oben).
 2. **IBAN:** Standard ist die Verwaltungs-IBAN. Optional „IBAN je Eigentümer“ aktivieren, dann gilt die IBAN aus dem jeweiligen Objekt.
 3. **Briefkopf:** Adresse und Telefon in den Einstellungen eintragen. Ein Logo kann dort hochgeladen werden.
 4. **Unterzeichner:** Name und Funktion für Kündigungen und Vereinbarungen stehen in den Einstellungen.

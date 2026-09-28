@@ -82,7 +82,8 @@
   }
   function parseDatum(s) {
     if (s == null || s === '') return '';
-    if (s instanceof Date && !isNaN(s)) return s.getFullYear() + '-' + pad(s.getMonth() + 1) + '-' + pad(s.getDate());
+    // +1 h: Excel-Datumswerte kommen je nach Zeitzone als 23:59:xx des Vortags an
+    if (s instanceof Date && !isNaN(s)) { const x = new Date(s.getTime() + 3600e3); return x.getFullYear() + '-' + pad(x.getMonth() + 1) + '-' + pad(x.getDate()); }
     s = String(s).trim(); let m;
     if ((m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/))) return m[1] + '-' + pad(m[2]) + '-' + pad(m[3]);
     if ((m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{2,4})$/))) { let y = +m[3]; if (y < 100) y += 2000; return y + '-' + pad(m[2]) + '-' + pad(m[1]); }
@@ -271,7 +272,9 @@
     let grund = '';
     if (b) grund = 'den Betrag von zwei Monatsmieten (' + fmtEUR(2 * monatsmiete) + ')';
     else if (a) grund = 'für die zwei aufeinanderfolgenden Termine ' + monatLabel(a.von) + ' und ' + monatLabel(a.bis) + ' den Betrag einer Monatsmiete (' + fmtEUR(monatsmiete) + ')';
-    return { moeglich: !!(a || b), a, b, summeMiete, monatsmiete, text, grund, hinweis: 'Prüfhinweis – ersetzt keine rechtliche Prüfung.' };
+    const saldoOffen = sum((posten || []).filter(p => p.saldo), p => p.offen);
+    if (saldoOffen > 0) text += ' Achtung: ' + fmtEUR(saldoOffen) + ' stammen aus dem Saldo der OPOS-Liste ohne Aufschlüsselung und werden nicht als Miete gewertet – für die Prüfung die Einzelposten erfassen oder importieren.';
+    return { moeglich: !!(a || b), a, b, summeMiete, monatsmiete, saldoOffen, text, grund, hinweis: 'Prüfhinweis – ersetzt keine rechtliche Prüfung.' };
   }
   function monatLabel(ym) {
     const n = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
@@ -522,8 +525,8 @@
     objekt: { label: 'Objekt', syn: ['objekt', 'objektbezeichnung', 'liegenschaft', 'haus', 'objektnr', 'we'] },
     whg: { label: 'Wohnung / Lage', syn: ['whg', 'wohnung', 'lage', 'einheit', 'mieteinheit', 'ne'] },
     bez: { label: 'Bezeichnung / Buchungstext', syn: ['bez', 'bezeichnung', 'text', 'buchungstext', 'art', 'sollart', 'verwendungszweck'] },
-    faellig: { label: 'Fälligkeit', syn: ['faellig', 'fällig', 'fälligkeit', 'faelligkeit', 'datum', 'soll-datum', 'belegdatum', 'monat'] },
-    betrag: { label: 'Betrag (Soll)', syn: ['betrag', 'soll', 'sollbetrag', 'forderung'] },
+    faellig: { label: 'Fälligkeit', syn: ['faellig', 'fällig', 'fälligkeit', 'faelligkeit', 'soll-datum', 'datum', 'belegdatum', 'monat'] },
+    betrag: { label: 'Betrag (Soll)', syn: ['betrag', 'betrag€', 'betrageur', 'soll', 'sollbetrag', 'forderung'] },
     offen: { label: 'Offener Betrag', syn: ['offen', 'offenerbetrag', 'saldo', 'restbetrag', 'op', 'offen betrag'] },
     typ: { label: 'Typ (Miete/Sonstig)', syn: ['typ', 'kategorie', 'kostenart'] },
     miete: { label: 'Monatsmiete', syn: ['gesamtmiete', 'monatsmiete', 'miete', 'warmmiete', 'sollmiete'] },
@@ -533,18 +536,21 @@
     const norm = s => String(s || '').toLowerCase().replace(/[^a-zäöüß0-9-]/g, '');
     const map = {}; const used = new Set();
     Object.keys(IMPORT_FELDER).forEach(k => {
-      const idx = headers.findIndex((h, i) => !used.has(i) && IMPORT_FELDER[k].syn.map(norm).includes(norm(h)));
-      if (idx >= 0) { map[k] = idx; used.add(idx); }
+      for (const syn of IMPORT_FELDER[k].syn.map(norm)) {
+        const idx = headers.findIndex((h, i) => !used.has(i) && norm(h) === syn);
+        if (idx >= 0) { map[k] = idx; used.add(idx); break; }
+      }
     });
     return map;
   }
   function typAusText(t) {
     t = String(t || '').toLowerCase();
-    if (/sonst|nk|nebenkost|betriebskost|heizkost|abrechnung|mahn|gebühr|gebuehr|schaden|kosten|zins/.test(t) && !/^miete|grundmiete|nettokalt|nutzungsentsch/.test(t)) return 'sonstig';
+    if (/sonst|\bnk\b|nebenkost|betriebskost|heizkost|abrechnung|nachzahlung|mahn|gebühr|gebuehr|schaden|kosten|zins/.test(t) && !/^miete|grundmiete|nettokalt|nutzungsentsch/.test(t)) return 'sonstig';
     return 'miete';
   }
   /** Offene Posten importieren. rows = Datenzeilen (ohne Kopf), mapping = {feld: spaltenIndex} */
-  function importOPOS(data, rows, mapping, heute = today()) {
+  function importOPOS(data, rows, mapping, heute = today(), opts = {}) {
+    const beruehrt = new Set();
     const stat = { mieterNeu: 0, objekteNeu: 0, faelleNeu: 0, postenNeu: 0, postenAktualisiert: 0, uebersprungen: 0 };
     const get = (r, k) => (mapping[k] != null && mapping[k] !== '' ? r[mapping[k]] : undefined);
     rows.forEach(r => {
@@ -558,11 +564,12 @@
         else { const p = voll.split(/\s+/); nachname = p.pop(); vorname = p.join(' '); }
       }
       const mietnr = String(get(r, 'mietnr') || '').trim();
-      if (!(offen > 0) || (!mietnr && !nachname)) { stat.uebersprungen++; return; }
+      const fest = opts.mieterId ? data.mieter.find(x => x.id === opts.mieterId) : null;
+      if (!(offen > 0) || (!fest && !mietnr && !nachname)) { stat.uebersprungen++; return; }
       const objName = String(get(r, 'objekt') || '').trim();
       let obj = objName ? data.objekte.find(o => o.bezeichnung.toLowerCase() === objName.toLowerCase()) : null;
       if (objName && !obj) { obj = { id: uid(), bezeichnung: objName, strasse: '', plzort: '', eigentuemer: '' }; data.objekte.push(obj); stat.objekteNeu++; }
-      let m = data.mieter.find(x => (mietnr && x.mietnr === mietnr) || (!mietnr && x.nachname === nachname && (x.vorname || '') === vorname && (!obj || x.objektId === obj.id)));
+      let m = fest || data.mieter.find(x => (mietnr && x.mietnr === mietnr) || (!mietnr && x.nachname === nachname && (x.vorname || '') === vorname && (!obj || x.objektId === obj.id)));
       if (!m) {
         m = { id: uid(), objektId: obj ? obj.id : '', whg: String(get(r, 'whg') || ''), anrede: '', vorname, nachname, anschrift: '', email: String(get(r, 'email') || ''), tel: '', mietnr, gesamtmiete: parseBetrag(get(r, 'miete') || 0), mietbeginn: '', mietende: '', kaution: 0 };
         data.mieter.push(m); stat.mieterNeu++;
@@ -570,14 +577,234 @@
       let fall = data.opos.find(f => f.mieterId === m.id && f.stufe !== 'erledigt');
       if (!fall) { fall = { id: uid(), mieterId: m.id, stufe: 'neu', posten: [], raten: [], notiz: '', angelegt: heute }; data.opos.push(fall); stat.faelleNeu++; addVerlauf(data, 'opos', fall.id, 'import', 'Fall durch Import angelegt', heute); }
       const bez = String(get(r, 'bez') || 'Offener Posten').trim();
-      const faellig = parseDatum(get(r, 'faellig')) || '';
+      const faellig = parseDatum(get(r, 'faellig')) || parseDatum(get(r, 'datum')) || '';
       const typRaw = get(r, 'typ');
       const typ = typRaw != null ? (/sonst/i.test(typRaw) ? 'sonstig' : typAusText(typRaw)) : typAusText(bez);
       const dup = fall.posten.find(p => p.bez === bez && p.faellig === faellig && round2(p.betrag) === round2(betrag));
       if (dup) { if (round2(dup.offen) !== round2(offen)) { dup.offen = offen; stat.postenAktualisiert++; } }
       else { fall.posten.push({ id: uid(), bez, faellig, typ, betrag: betrag || offen, offen }); stat.postenNeu++; }
+      beruehrt.add(fall);
     });
+    beruehrt.forEach(saldoAbgleich);
     return stat;
+  }
+
+  /* ---------- Import OPOS-Liste (Salden je Mieter) ---------- */
+  function normName(s) { return String(s || '').toUpperCase().replace(/[^A-Z0-9ÄÖÜß]/g, ''); }
+  function titleCase(s) { return String(s).toLowerCase().replace(/(^|[\s\-/'(])(\p{L})/gu, (m, a, b) => a + b.toUpperCase()); }
+  const FIRMA_RE = /(gmbh|mbh|\bug\b|\bag\b|\bkg\b|\bohg\b|\bgbr\b|e\.\s?v\.|gastronom|immobil|bauträger|concept|service|holding|brother|&)/i;
+  /** „NACHNAME, VORNAME“ → Namensteile; Firmen bleiben unverändert */
+  function nameAufteilen(raw) {
+    raw = String(raw || '').trim().replace(/\s+/g, ' ');
+    if (FIRMA_RE.test(raw)) return { anrede: 'Firma', vorname: '', nachname: raw };
+    const i = raw.indexOf(',');
+    if (i < 0) return { anrede: '', vorname: '', nachname: titleCase(raw) };
+    return { anrede: '', nachname: titleCase(raw.slice(0, i).trim()), vorname: titleCase(raw.slice(i + 1).trim()) };
+  }
+  /** „01.03.25 - 31.07.26,“ → { von, bis } */
+  function parseMietzeit(v) {
+    if (v instanceof Date) return { von: parseDatum(v), bis: '' };
+    const m = String(v || '').match(/(\d{1,2}\.\d{1,2}\.\d{2,4})\s*-\s*(\d{1,2}\.\d{1,2}\.\d{2,4})?/);
+    return m ? { von: parseDatum(m[1]), bis: m[2] ? parseDatum(m[2]) : '' } : { von: '', bis: '' };
+  }
+  /** Saldo aus Zahl, „=1.2-3“, „7000 ca.“, „1400€ offen“ */
+  function parseSaldo(v) {
+    if (typeof v === 'number') return round2(v);
+    const s = String(v == null ? '' : v).trim();
+    if (/^=\s*[\d.,+\-\s]+$/.test(s)) return round2((s.slice(1).replace(/,/g, '.').match(/[+-]?\s*\d+(\.\d+)?/g) || []).reduce((a, t) => a + parseFloat(t.replace(/\s/g, '')), 0));
+    const m = s.match(/-?\d[\d.]*(,\d+)?/);
+    return m ? parseBetrag(m[0]) : 0;
+  }
+  /** WV-Angabe aus Liste: Datum, „01.09“, „WV 30.09“ → ISO (Jahr aus Stichtag) */
+  function parseWV(v, stand) {
+    if (v == null || v === '') return '';
+    if (v instanceof Date) return parseDatum(v);
+    if (typeof v === 'number') return v > 30000 && v < 80000 ? parseDatum(String(v)) : '';
+    const s = String(v).trim();
+    let m = s.match(/(\d{1,2})\.(\d{1,2})\.(\d{2,4})/);
+    if (m) return parseDatum(m[0]);
+    m = s.match(/(?:^|\bWV\s*)(\d{1,2})\.(\d{1,2})\.?(?:\s|$)/i);
+    if (m && +m[1] <= 31 && +m[2] <= 12) {
+      let iso = stand.slice(0, 4) + '-' + pad(m[2]) + '-' + pad(m[1]);
+      if (diffDays(iso, stand) > 90) iso = addMonths(iso, 12);
+      return iso;
+    }
+    return '';
+  }
+  function zellText(v) { return v instanceof Date ? fmtDatum(parseDatum(v)) : typeof v === 'number' ? fmtZahl(v) : String(v).trim(); }
+
+  /** Blattformat erkennen: json (Rohdaten), saldo (Name/Saldo je Mieter), posten (Einzelposten) */
+  function erkenneFormat(rows) {
+    const erste = rows.slice(0, 12).map(r => String(r[0] == null ? '' : r[0])).join(' ');
+    if (/"saldo_zeile"/.test(erste)) return { format: 'json', kopf: -1 };
+    for (let i = 0; i < Math.min(rows.length, 15); i++) {
+      const h = rows[i].map(c => String(c == null ? '' : c).trim().toLowerCase());
+      if (h.includes('name') && h.includes('saldo')) return { format: 'saldo', kopf: i };
+      const g = guessMapping(rows[i]);
+      if ((g.betrag != null || g.offen != null) && (g.bez != null || g.faellig != null) && (g.name != null || g.mietnr != null || g.nachname != null || g.bez != null)) return { format: 'posten', kopf: i };
+    }
+    return { format: 'unbekannt', kopf: 0 };
+  }
+  /** Titelzeile „… für NAME (Whg. 12):“ eines Posten-Blatts */
+  function titelMieter(rows, kopf) {
+    for (let i = 0; i < kopf; i++) {
+      const m = String(rows[i][0] || '').match(/für\s+(.+?)\s*\((Whg\.?\s*[^)]*)\)/i);
+      if (m) return { name: m[1].trim(), whg: m[2].replace(/\s+/g, ' ') };
+    }
+    return null;
+  }
+  /** „NAME Whg. 1 PFkt. 007 Mieter 01.03.25 - 31.07.26“ zerlegen. Das Namensfeld ist 30 Zeichen breit
+   *  und kann direkt an „Whg.“ kleben („…BERTHOLDWhg. 45“, „…GASTRONOMIWEhg. 1“). */
+  function zerlegeKontoName(n) {
+    n = String(n || '').trim();
+    const x = n.match(/^(.*?)\s*W?h?hg\.\s*(\S+)\s+PFkt\.?\s*(\S+)\s+Mieter\s+(\d{1,2}\.\d{1,2}\.\d{2,4})\s*-\s*(\d{1,2}\.\d{1,2}\.\d{2,4})?/i);
+    return x ? { name: x[1].trim(), whg: 'Whg. ' + x[2], pfkt: x[3], von: parseDatum(x[4]), bis: x[5] ? parseDatum(x[5]) : '' }
+      : { name: n, whg: '', pfkt: '', von: '', bis: '' };
+  }
+  function parseJsonBlatt(rows) {
+    const text = rows.map(r => String(r[0] == null ? '' : r[0])).join('\n').replace(/\u00a0/g, ' ');
+    const re = /"name"\s*:\s*"((?:[^"\\]|\\.)*)"[\s\S]*?"saldo_zeile"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
+    const out = []; let m;
+    while ((m = re.exec(text))) {
+      const n = m[1].trim(); const saldo = parseBetrag(m[2].replace(/^[^:]*:/, ''));
+      out.push(Object.assign({ saldo, aktiv: null, wv: [], notizen: [] }, zerlegeKontoName(n)));
+    }
+    return out;
+  }
+  function parseSaldenBlatt(rows, kopf, stand) {
+    const H = rows[kopf].map(h => String(h == null ? '' : h).trim());
+    const n = H.map(h => h.toLowerCase());
+    const iName = n.findIndex(h => h === 'name' || h === 'mieter');
+    const iDatum = n.findIndex(h => /^(datum|mietzeit|zeitraum|mietdauer)$/.test(h));
+    const iSaldo = n.indexOf('saldo');
+    const iAktiv = n.indexOf('aktiv');
+    const iWV = n.map((h, i) => (/^wv\b|wiedervorlage/.test(h) ? i : -1)).filter(i => i >= 0);
+    const out = [];
+    rows.slice(kopf + 1).forEach(r => {
+      const name = String(r[iName] == null ? '' : r[iName]).trim();
+      if (!/\p{L}{2}/u.test(name)) return;
+      const mz = parseMietzeit(r[iDatum]);
+      const kn = /PFkt\./.test(name) ? zerlegeKontoName(name) : null;
+      const e = { name: kn ? kn.name : name, whg: kn ? kn.whg : '', pfkt: kn ? kn.pfkt : '', von: mz.von || (kn && kn.von) || '', bis: mz.bis || (kn && kn.bis) || '', saldo: parseSaldo(r[iSaldo]), aktiv: iAktiv >= 0 ? /^j/i.test(String(r[iAktiv] || '')) : null, wv: [], notizen: [] };
+      if (r[iSaldo] != null && typeof r[iSaldo] === 'string' && !/^=/.test(r[iSaldo]) && !/^-?[\d.,]+$/.test(r[iSaldo].trim())) e.notizen.push('Saldo lt. Liste: ' + r[iSaldo]);
+      r.forEach((v, c) => {
+        if ([iName, iDatum, iSaldo, iAktiv].includes(c) || v == null || String(v).trim() === '') return;
+        if (iWV.includes(c)) { const w = parseWV(v, stand); if (w) { e.wv.push(w); return; } }
+        const t = zellText(v);
+        if (typeof v === 'string') { const w = /\bWV\s*\d/i.test(v) ? parseWV(v, stand) : ''; if (w) e.wv.push(w); }
+        e.notizen.push((H[c] ? H[c].replace(/\?$/, '') + ': ' : '') + t);
+      });
+      out.push(e);
+    });
+    return out;
+  }
+  /** Mieter zu einem Listeneintrag finden: exakter Name (+ Mietbeginn); abgeschnittene Namen (Feld 30 Zeichen)
+   *  nur über den Namensanfang, wenn der kürzere Name lang genug ist und der Mieter noch nicht zugeordnet wurde. */
+  function findeMieter(data, e, schonZugeordnet) {
+    const k = normName(e.name);
+    const kand = data.mieter.filter(m => normName(m.importName || (m.nachname + ', ' + m.vorname)) === k);
+    const gleich = kand.find(m => !e.von || !m.mietbeginn || m.mietbeginn === e.von);
+    if (gleich) return gleich;
+    if (!e.von || k.length < 22) return null;
+    return data.mieter.find(m => {
+      if (m.mietbeginn !== e.von || !m.importName || (schonZugeordnet && schonZugeordnet.has(m.id))) return false;
+      const n = normName(m.importName);
+      return Math.min(n.length, k.length) >= 22 && (n.startsWith(k) || k.startsWith(n));
+    }) || null;
+  }
+  /** Saldo-Posten so setzen, dass Summe offen = Saldo lt. Liste (Einzelposten gehen vor) */
+  function saldoAbgleich(fall) {
+    const sp = (fall.posten || []).find(p => p.saldo); if (!sp) return;
+    const andere = sum(fall.posten.filter(p => p !== sp), p => p.offen);
+    sp.offen = Math.max(0, round2(sp.saldoListe - andere));
+  }
+  /**
+   * Salden importieren. eintraege: [{ name, von, bis, whg, pfkt, saldo, aktiv, wv[], notizen[] }]
+   * o: { stand, blatt, objektId, mindestSaldo, ehemalige, notizen, wv, fehlendeErledigen, pruefWV, heute }
+   */
+  function importSalden(data, eintraege, o = {}) {
+    const stand = o.stand || today(), heute = o.heute || today();
+    const min = o.mindestSaldo == null ? 0.01 : o.mindestSaldo;
+    const st = { mieterNeu: 0, objekteNeu: 0, faelleNeu: 0, aktualisiert: 0, unveraendert: 0, erledigt: 0, uebersprungen: 0, wvNeu: 0, summe: 0 };
+    const gesehen = new Set();
+    const objektFuer = e => {
+      if (o.objektId) return o.objektId;
+      const bez = e.pfkt ? 'PFkt. ' + e.pfkt : 'Import OPOS-Liste';
+      let ob = data.objekte.find(x => x.bezeichnung === bez);
+      if (!ob) { ob = { id: uid(), bezeichnung: bez, strasse: '', plzort: '', eigentuemer: '' }; data.objekte.push(ob); st.objekteNeu++; }
+      return ob.id;
+    };
+    const quelle = '[' + fmtDatum(stand) + (o.blatt ? ' · ' + o.blatt : '') + '] ';
+    // mehrere Personenkonten desselben Mieters (Wohnung, Stellplatz …) zu einem Saldo zusammenfassen
+    const agg = new Map();
+    eintraege.forEach(e => {
+      const k = normName(e.name) + '|' + (e.von || '');
+      const a = agg.get(k);
+      if (!a) { agg.set(k, Object.assign({}, e, { wv: e.wv.slice(), notizen: e.notizen.slice(), konten: 1 })); return; }
+      a.saldo = round2(a.saldo + e.saldo); a.konten++;
+      if (e.whg && !(a.whg || '').split(', ').includes(e.whg)) a.whg = a.whg ? a.whg + ', ' + e.whg : e.whg;
+      a.bis = !a.bis || !e.bis ? '' : maxISO(a.bis, e.bis);
+      if (e.aktiv) a.aktiv = true;
+      a.wv.push(...e.wv); e.notizen.forEach(t => { if (!a.notizen.includes(t)) a.notizen.push(t); });
+    });
+    Array.from(agg.values()).forEach(e => {
+      if (!e.name) return;
+      const ehemalig = e.aktiv === false || (e.bis && e.bis < stand);
+      if (ehemalig && o.ehemalige === false) { st.uebersprungen++; return; }
+      const hatSaldo = e.saldo >= min;
+      let m = findeMieter(data, e, gesehen);
+      if (!m && !hatSaldo) { st.uebersprungen++; return; }
+      if (!m) {
+        m = Object.assign({ id: uid(), objektId: objektFuer(e), whg: e.whg || '', anschrift: '', email: '', tel: '', mietnr: '', gesamtmiete: 0, mietbeginn: e.von || '', mietende: e.bis || '', kaution: 0, importName: e.name }, nameAufteilen(e.name));
+        data.mieter.push(m); st.mieterNeu++;
+      } else {
+        if (!m.importName) m.importName = e.name;
+        if (!m.mietbeginn && e.von) m.mietbeginn = e.von;
+        if (e.bis && m.mietende !== e.bis) m.mietende = e.bis;
+        if (!m.whg && e.whg) m.whg = e.whg;
+      }
+      gesehen.add(m.id);
+      let fall = data.opos.find(f => f.mieterId === m.id && f.stufe !== 'erledigt');
+      const fallNeu = !fall;
+      if (!fall) {
+        if (!hatSaldo) { st.uebersprungen++; return; }
+        fall = { id: uid(), mieterId: m.id, stufe: 'neu', posten: [], raten: [], notiz: '', angelegt: heute };
+        data.opos.push(fall); st.faelleNeu++;
+        addVerlauf(data, 'opos', fall.id, 'import', 'Fall aus OPOS-Liste angelegt (Saldo ' + fmtEUR(e.saldo) + ', Stand ' + fmtDatum(stand) + ')', heute);
+        if (o.pruefWV) createWV(data, 'opos', fall.id, heute, 'Importierten Fall prüfen – Zahlungserinnerung versenden?', { regel: 'opos:neu', heute });
+      }
+      const bez = 'Saldo lt. OPOS-Liste (Stand ' + fmtDatum(stand) + ')';
+      let sp = fall.posten.find(p => p.saldo);
+      if (!sp) {
+        sp = { id: uid(), bez, faellig: stand, typ: 'sonstig', betrag: e.saldo, offen: e.saldo, saldo: true, saldoListe: e.saldo };
+        fall.posten.push(sp);
+        if (!fallNeu) st.aktualisiert++;
+      } else if (round2(sp.saldoListe) !== round2(e.saldo)) {
+        const diff = round2(e.saldo - sp.saldoListe);
+        addVerlauf(data, 'opos', fall.id, 'import', 'Saldo lt. OPOS-Liste ' + fmtEUR(sp.saldoListe) + ' → ' + fmtEUR(e.saldo) + ' (' + (diff > 0 ? '+' : '') + fmtEUR(diff) + ', Stand ' + fmtDatum(stand) + ')', heute);
+        Object.assign(sp, { saldoListe: e.saldo, betrag: e.saldo, bez, faellig: stand }); st.aktualisiert++;
+      } else { sp.bez = bez; st.unveraendert++; }
+      saldoAbgleich(fall);
+      st.summe = round2(st.summe + Math.max(0, e.saldo));
+      if (e.saldo <= 0 && offenSumme(fall.posten) <= 0) {
+        applyAction(data, 'opos', fall.id, 'erledigt', { heute, verlaufText: 'Saldo lt. OPOS-Liste ausgeglichen (Stand ' + fmtDatum(stand) + ')' }); st.erledigt++;
+        return;
+      }
+      if (o.notizen !== false) e.notizen.forEach(t => { if (!(fall.notiz || '').includes(t)) fall.notiz = (fall.notiz ? fall.notiz + '\n' : '') + quelle + t; });
+      if (o.wv !== false) Array.from(new Set(e.wv)).forEach(w => {
+        const d = wvDatum(data, w);
+        if (data.wv.some(x => x.refId === fall.id && x.regel === 'import' && x.datum === d)) return;
+        createWV(data, 'opos', fall.id, w, 'WV aus OPOS-Liste' + (o.blatt ? ' (' + o.blatt + ')' : '') + (e.notizen.length ? ': ' + e.notizen[e.notizen.length - 1].slice(0, 80) : ''), { erstelltDurch: 'manuell', regel: 'import', heute });
+        st.wvNeu++;
+      });
+    });
+    if (o.fehlendeErledigen) {
+      data.opos.filter(f => f.stufe !== 'erledigt' && f.posten.some(p => p.saldo) && !gesehen.has(f.mieterId)).forEach(f => {
+        const sp = f.posten.find(p => p.saldo); sp.saldoListe = 0; saldoAbgleich(f);
+        if (offenSumme(f.posten) <= 0) { applyAction(data, 'opos', f.id, 'erledigt', { heute, verlaufText: 'Nicht mehr in der OPOS-Liste (Stand ' + fmtDatum(stand) + ') – erledigt' }); st.erledigt++; }
+      });
+    }
+    return st;
   }
 
   /* ---------- E-Mail (.eml) ---------- */
@@ -612,7 +839,7 @@
     offenSumme, kuendigungsCheck, verteileZahlung, kautionsabrechnung, verjaehrung, kautionAmpel, ratenplan,
     wvDatum, createWV, completeWV, snoozeWV, closeWV, offeneWV, addVerlauf, wvRegeln, applyAction, findFall,
     getPath, vorlageZuHTML, vorlageZuText,
-    parseCSV, guessMapping, typAusText, importOPOS, asciiDateiname, buildEML
+    parseCSV, guessMapping, typAusText, importOPOS, normName, nameAufteilen, parseMietzeit, parseSaldo, parseWV, erkenneFormat, titelMieter, parseJsonBlatt, parseSaldenBlatt, findeMieter, saldoAbgleich, importSalden, asciiDateiname, buildEML
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = Core;
   else root.Core = Core;
