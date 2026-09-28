@@ -26,6 +26,13 @@
           '<td>' + H.wvChip(H.naechsteWV('ih', x.id)) + '</td></tr>';
       }).join('') + '</tbody></table>';
   }
+  /** Knopf „In Excel eintragen (n)“ – nur wenn Aufgaben aus der Excel-Liste stammen */
+  function excelKnopf() {
+    if (!App.data.ih.some(x => x.quelle === 'ih-liste')) return '';
+    const n = C.excelAenderungen(App.data).length;
+    return '<button data-act="ihExcelSchreiben" class="' + (n ? 'primary' : '') + '" title="WV und nächste Schritte aus dem Tool in die Instandhaltungsliste (Excel) schreiben">⇄ In Excel eintragen' + (n ? ' (' + n + ')' : '') + '</button>';
+  }
+  App.ihExcelKnopf = excelKnopf;
   function gefiltert() {
     const f = App.f.ih, q = f.q.toLowerCase();
     const prioRang = x => ({ 'A+': 0, AAA: 0, AA: 1, A: 2, B: 3, C: 4 }[x.prio] ?? ({ notfall: 0, hoch: 1, normal: 5 }[x.dringlichkeit]));
@@ -44,7 +51,7 @@
         '<select data-filter="ih.status"><option value="aktiv"' + (f.status === 'aktiv' ? ' selected' : '') + '>aktive</option><option value=""' + (f.status === '' ? ' selected' : '') + '>alle</option>' +
         REIHE.map(s => '<option value="' + s + '"' + (f.status === s ? ' selected' : '') + '>' + ST[s] + '</option>').join('') + '</select>' +
         '<span class="muted">' + list.length + ' Aufgaben</span><span class="sp"></span>' + (App.data.meta.ihListeStand ? '<small class="muted">Liste eingelesen ' + fmtDatum(App.data.meta.ihListeStand) + '</small>' : '') +
-        '<button data-act="ihListeImport">⇪ Instandhaltungsliste einlesen</button><button data-act="ihExcel">Liste Excel</button><button data-act="ihPng">PNG</button><button class="primary" data-act="ihNeu">+ Aufgabe / Schaden</button></div>' +
+        '<button data-act="ihListeImport">⇪ Instandhaltungsliste einlesen</button>' + excelKnopf() + '<button data-act="ihExcel">Liste Excel</button><button data-act="ihPng">PNG</button><button class="primary" data-act="ihNeu">+ Aufgabe / Schaden</button></div>' +
         (list.length ? tabelle(list) : H.leer('Keine Aufgaben für diesen Filter. Die bestehende Excel-Liste lässt sich über „⇪ Instandhaltungsliste einlesen“ übernehmen.')) + '</section>';
     },
     detail(id) {
@@ -151,14 +158,84 @@
       if (v.wv) C.createWV(App.data, 'ih', f.id, v.wv, v.naechsterSchritt || f.titel, { erstelltDurch: 'manuell' });
       App.commit();
     },
+    async ihExcelSchreiben() {
+      const aend = C.excelAenderungen(App.data);
+      if (!aend.length) return App.toast('Keine offenen Änderungen – die Excel ist auf dem Stand des Tools.');
+      let h = D.DATEI_API ? await D.handleLaden('ihListe') : null;
+      const zeilen = aend.map(a => '<tr><td>' + esc(objektName(a.f)) + '</td><td>' + esc(a.f.titel) + '</td><td class="nw">' + (a.wv ? fmtDatum(a.f.listeWVDatum) + ' → <b>' + fmtDatum(a.wv) + '</b>' : '') + '</td><td>' + (a.schritt != null ? '<b>' + esc(a.schritt || '(leer)') + '</b>' : '') + '</td></tr>').join('');
+      const r = await App.modal({ title: '⇄ In die Instandhaltungsliste eintragen', wide: true,
+        body: '<p>' + aend.length + ' Aufgabe(n) mit geänderter WV bzw. nächstem Schritt' + (h ? ' → <b>' + esc(h.name) + '</b>' : '') + ':</p><div class="scrollx"><table class="tbl small"><thead><tr><th>Objekt</th><th>Aufgabe</th><th>WV</th><th>nächster Schritt</th></tr></thead><tbody>' + zeilen + '</tbody></table></div>' +
+          '<p class="small muted">Es werden nur die Zellen „WV“ und „nächster Schritt“ in den jeweiligen Zeilen geändert – Formatierung, ausgeblendete Zeilen und andere Blätter bleiben unverändert. Vorher wird geprüft, ob in der Zeile noch dieselbe Aufgabe steht; wurde die Zelle in Excel inzwischen von Hand geändert, wird sie nicht überschrieben. ' +
+          '<b>Die Excel-Datei muss dafür geschlossen sein.</b></p>' + (D.DATEI_API ? '' : '<p class="small">Dein Browser kann nicht direkt in Dateien schreiben (nur Edge/Chrome). Du wählst die Datei aus und bekommst eine aktualisierte Kopie zum Speichern.</p>'),
+        buttons: [{ label: 'Abbrechen', value: '' }, { label: D.DATEI_API ? (h ? '⇄ In ' + esc(h.name) + ' eintragen' : 'Excel-Datei wählen & eintragen') : 'Datei wählen …', value: 'ok', cls: 'primary' }] });
+      if (r.action !== 'ok') return;
+      let datei;
+      try {
+        if (D.DATEI_API) {
+          if (!h) h = await D.excelWaehlen('ihListe');
+          if (!await D.zugriff(h, true)) return App.toast('Schreibzugriff auf die Datei wurde nicht erlaubt.', 'warn');
+          datei = await h.getFile();
+        } else {
+          const v = await App.formModal('Instandhaltungsliste wählen', [{ k: 'datei', l: 'Excel-Datei', t: 'file', accept: '.xlsx,.xlsm', full: true }], {}, { ok: 'Eintragen' });
+          if (!v || !v.datei[0]) return; datei = v.datei[0];
+        }
+      } catch (e) { if (e.name === 'AbortError') return; return App.toast('Datei konnte nicht geöffnet werden: ' + e.message, 'err', 9000); }
+      const vorher = aend.map(a => ({ f: a.f, wv: a.f.listeWVDatum, basis: a.f.listeWVBasis, schritt: a.f.listeSchritt, zeile: a.f.listenZeile }));
+      const gruppen = {}; aend.forEach(a => { (gruppen[a.f.listenBlatt || ''] = gruppen[a.f.listenBlatt || ''] || []).push(a); });
+      let res = { ok: [], fehlt: [], konflikt: [] }, alt = null, blob = null;
+      try {
+        for (const blatt of Object.keys(gruppen)) {
+          const r2 = await D.excelZellenAendern(blob ? new File([blob], datei.name) : datei, blatt, gruppen[blatt]);
+          if (!alt) alt = r2.alt; if (r2.blob) blob = r2.blob;
+          res.ok.push(...r2.ok); res.fehlt.push(...r2.fehlt); res.konflikt.push(...r2.konflikt);
+        }
+        if (blob) {
+          if (D.DATEI_API) await D.dateiSchreiben(h, blob);
+          else D.download(blob, datei.name);
+        }
+      } catch (e) {
+        const gesperrt = /NoModificationAllowed|InvalidState|NotReadable|InvalidModification/.test(e.name) || /lock|gesperrt|in use/i.test(e.message);
+        return App.toast(gesperrt ? 'Die Datei ist gerade geöffnet (Excel?) oder gesperrt. Bitte Excel schließen und erneut versuchen. Nichts wurde geändert.' : 'Nicht gespeichert: ' + e.message, 'err', 12000);
+      }
+      C.excelGeschrieben(res.ok);
+      res.ok.forEach(a => C.addVerlauf(App.data, 'ih', a.f.id, 'excel', 'In Instandhaltungsliste eingetragen (Zeile ' + a.zeile + '): ' + [a.wv ? 'WV ' + fmtDatum(a.wv) : '', a.schritt != null ? 'nächster Schritt „' + a.schritt + '“' : ''].filter(Boolean).join(', ')));
+      App.data.meta.ihExcelGeschrieben = new Date().toISOString();
+      App.commit();
+      const rr = await App.modal({ title: res.ok.length ? '✓ In Excel eingetragen' : 'Nichts eingetragen', body:
+        '<ul>' + (res.ok.length ? '<li><b>' + res.ok.length + '</b> Aufgabe(n) in ' + esc(datei.name) + (D.DATEI_API ? ' gespeichert' : ' – aktualisierte Datei heruntergeladen, bitte die alte Datei damit ersetzen') + '</li>' : '') +
+        (res.konflikt.length ? '<li class="rot-t">' + res.konflikt.length + ' nicht überschrieben, weil in Excel inzwischen von Hand geändert: ' + res.konflikt.map(a => esc(a.f.titel) + ' (Zeile ' + a.zeile + ', ' + a.feld + ' in Excel: „' + esc(a.inExcel) + '“)').join('; ') + ' – bitte Liste neu einlesen</li>' : '') +
+        (res.fehlt.length ? '<li class="rot-t">' + res.fehlt.length + ' Aufgabe(n) in der Excel nicht mehr gefunden: ' + res.fehlt.map(a => esc(a.f.titel)).join('; ') + '</li>' : '') + '</ul>',
+        buttons: [...(D.DATEI_API && blob ? [{ label: '↶ Rückgängig', value: 'undo', cls: 'del' }] : []), { label: 'OK', value: '' }] });
+      if (rr.action === 'undo') {
+        try { await D.dateiSchreiben(h, alt); } catch (e) { return App.toast('Rückgängig nicht möglich: ' + e.message, 'err', 9000); }
+        vorher.forEach(x => { x.f.listeWVDatum = x.wv; x.f.listeWVBasis = x.basis; x.f.listeSchritt = x.schritt; x.f.listenZeile = x.zeile; C.addVerlauf(App.data, 'ih', x.f.id, 'excel', 'Eintrag in Excel rückgängig gemacht'); });
+        App.commit(); App.toast('Excel-Datei wiederhergestellt.');
+      }
+    },
     async ihListeImport() {
-      const v = await App.formModal('Instandhaltungsliste einlesen', [{ k: 'datei', l: 'Excel-Datei (TO-DO-Liste)', t: 'file', accept: '.xlsx,.xlsm,.xls,.ods', full: true },
+      const offen = C.excelAenderungen(App.data).length;
+      if (offen && await App.confirm(offen + ' Änderung(en) aus dem Tool stehen noch nicht in der Excel (WV / nächster Schritt). Beim Einlesen würden sie mit dem Stand der Excel überschrieben.<br><b>Zuerst in die Excel eintragen?</b>', 'Ja, erst eintragen', 'Nein, einlesen')) {
+        await App.act.ihExcelSchreiben(); if (C.excelAenderungen(App.data).length) return;
+      }
+      const h = D.DATEI_API ? await D.handleLaden('ihListe') : null;
+      const intro = '<p class="muted">Liest jede <b>sichtbare</b> Zeile mit Objekt und Aufgabe – <b>ausgeblendete Zeilen werden ignoriert</b>. Spalten: Objekt · SB · Aufgabe · benötigtes Material · Termin · Mieter/Prio · nächster Schritt · WV · Besonderheiten. ' +
+        'WV und Termine werden Wiedervorlagen. Erneut einlesen gleicht ab: Änderungen landen im Verlauf, Aufgaben die nicht mehr sichtbar sind gelten als erledigt.</p>' +
+        (D.DATEI_API ? '<p class="small">Die Datei wird dabei <b>verbunden</b>: WV und nächste Schritte aus dem Tool lassen sich danach per „⇄ In Excel eintragen“ direkt in diese Datei schreiben.</p>' : '');
+      const v = await App.formModal('Instandhaltungsliste einlesen', [
+        ...(D.DATEI_API ? [] : [{ k: 'datei', l: 'Excel-Datei (TO-DO-Liste)', t: 'file', accept: '.xlsx,.xlsm,.xls,.ods', full: true }]),
         { k: 'stand', l: 'Stand (für WV-Daten ohne Jahr)', t: 'date', d: C.today(), req: true }], {},
-        { ok: 'Weiter', intro: '<p class="muted">Liest jede <b>sichtbare</b> Zeile mit Objekt und Aufgabe – <b>ausgeblendete Zeilen werden ignoriert</b>. Spalten: Objekt · SB · Aufgabe · benötigtes Material · Termin · Mieter/Prio · nächster Schritt · WV · Besonderheiten. ' +
-          'WV und Termine werden Wiedervorlagen. Erneut einlesen gleicht ab: Änderungen landen im Verlauf, Aufgaben die nicht mehr sichtbar sind gelten als erledigt.</p>' });
-      if (!v || !v.datei[0]) return;
+        { ok: D.DATEI_API ? (h ? 'Andere Datei wählen …' : 'Datei wählen …') : 'Weiter', intro, extra: h ? [{ label: '⇪ ' + esc(h.name) + ' neu einlesen', value: 'verbunden', cls: 'primary' }] : [] });
+      if (!v) return;
+      let datei;
+      try {
+        if (D.DATEI_API) {
+          const hh = v._action === 'verbunden' ? h : await D.excelWaehlen('ihListe');
+          if (!await D.zugriff(hh, false)) return App.toast('Kein Zugriff auf die Datei erlaubt.', 'warn');
+          datei = await hh.getFile();
+        } else { datei = v.datei[0]; if (!datei) return; }
+      } catch (e) { if (e.name === 'AbortError') return; return App.toast('Datei konnte nicht geöffnet werden: ' + e.message, 'err', 9000); }
       let blaetter;
-      try { blaetter = await D.leseArbeitsmappe(v.datei[0]); } catch (e) { return App.toast('Datei konnte nicht gelesen werden: ' + e.message, 'err', 9000); }
+      try { blaetter = await D.leseArbeitsmappe(datei); } catch (e) { return App.toast('Datei konnte nicht gelesen werden: ' + e.message, 'err', 9000); }
       blaetter = blaetter.map(b => Object.assign(b, { aufgaben: C.parseIhListe(b.rows, v.stand, b.zeilen) })).filter(b => b.aufgaben.length);
       if (!blaetter.length) return App.toast('Keine Aufgaben gefunden – es braucht eine Kopfzeile mit „Objekt“ und „Aufgabe“.', 'err', 9000);
       let blatt = blaetter[0];

@@ -1231,7 +1231,7 @@
       const wvText = wvRoh instanceof Date ? '' : zellTextIH(wvRoh).replace(/^(WV\s*)?\d{1,2}\.\s*(\d{1,2}\.?|[A-Za-zä]{3,}\.?)(\d{2,4})?\s*/i, '').trim();
       const basis = normName(objektText).slice(0, 30) + '|' + normName(aufgabe).slice(0, 40);
       zaehler[basis] = (zaehler[basis] || 0) + 1;
-      out.push({ key: basis + (zaehler[basis] > 1 ? '#' + zaehler[basis] : ''), zeile: zeilen ? zeilen[i] : i + 1, objektText, sb: zellTextIH(g('sb')), aufgabe,
+      out.push({ key: basis + (zaehler[basis] > 1 ? '#' + zaehler[basis] : ''), zeile: zeilen ? zeilen[i] : i + 1, spalten: { objekt: map.objekt, aufgabe: map.aufgabe, wv: map.wv, schritt: map.schritt }, objektText, sb: zellTextIH(g('sb')), aufgabe,
         titel: aufgabe.split('\n')[0].replace(/\s*\/\/.*$/, '').slice(0, 90) || objektText, material: zellTextIH(g('material')), termin: parseTermin(g('termin'), stand),
         prio, mieterInfo, schritt, wv: wvDatum, wvText, besonderheiten: zellTextIH(g('besonderheiten')) });
     });
@@ -1274,7 +1274,8 @@
       gesehen.add(e.key);
       const ob = objektFinden(data, e.objektText);
       const felder = { objektText: e.objektText, sb: e.sb, prio: e.prio, material: e.material, naechsterSchritt: e.schritt, besonderheiten: e.besonderheiten, mieterInfo: e.mieterInfo,
-        termin: e.termin.datum || '', terminText: e.termin.text, wvText: e.wvText, beschreibung: e.aufgabe, titel: e.titel, listenZeile: e.zeile };
+        termin: e.termin.datum || '', terminText: e.termin.text, wvText: e.wvText, beschreibung: e.aufgabe, titel: e.titel, listenZeile: e.zeile,
+        listenBlatt: o.blatt || '', listenSpalten: e.spalten || null, listeWVDatum: e.wv || '', listeSchritt: e.schritt || '' };
       let f = data.ih.find(x => x.listenKey === e.key);
       if (!f) {
         f = Object.assign({ id: uid(), objektId: ob ? ob.id : '', mieterId: '', gemeldetAm: stand, dringlichkeit: /^(A\+|AAA|AA)$/.test(e.prio) ? 'hoch' : 'normal',
@@ -1298,8 +1299,9 @@
       const wvTag = e.wv || (e.wvText && !offen('ih-liste').length ? heute : '');
       if (wvTag && !offen('ih-liste').some(w => w.datum === wvDatum(data, wvTag))) {
         data.wv.filter(w => w.refId === f.id && w.regel === 'ih-liste' && w.status === 'offen').forEach(w => { w.status = 'erledigt'; w.erledigtAm = heute; });
-        createWV(data, 'ih', f.id, wvTag, (e.wvText ? e.wvText + ' – ' : '') + (e.schritt || e.titel), { erstelltDurch: 'manuell', regel: 'ih-liste', heute }); st.wvNeu++;
-      }
+        const nw = createWV(data, 'ih', f.id, wvTag, (e.wvText ? e.wvText + ' – ' : '') + (e.schritt || e.titel), { erstelltDurch: 'manuell', regel: 'ih-liste', heute }); st.wvNeu++;
+        f.listeWVBasis = nw.datum; // Stand „wie aus der Liste“ – erst eine Änderung im Tool gilt als neu für die Excel
+      } else if (!e.wv && !e.wvText) f.listeWVBasis = '';
       // Termin
       if (e.termin.datum && !offen('ih-liste-termin').some(w => w.datum === wvDatum(data, e.termin.datum))) {
         data.wv.filter(w => w.refId === f.id && w.regel === 'ih-liste-termin' && w.status === 'offen').forEach(w => { w.status = 'erledigt'; w.erledigtAm = heute; });
@@ -1316,6 +1318,108 @@
     data.meta.ihListeStand = stand;
     return st;
   }
+
+  /* ---------- In die Excel-Liste zurückschreiben (nur einzelne Zellen, Formatierung bleibt) ---------- */
+  function xmlDecode(t) { return String(t).replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&#(\d+);/g, (m, n) => String.fromCharCode(+n)).replace(/&amp;/g, '&'); }
+  function xmlEncode(t) { return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function sstLesen(xml) { return (String(xml || '').match(/<si>[\s\S]*?<\/si>/g) || []).map(si => (si.match(/<t[^>]*>([\s\S]*?)<\/t>/g) || []).map(t => xmlDecode(t.replace(/<[^>]+>/g, ''))).join('')); }
+  function spalteBuchstabe(i) { let s = ''; i++; while (i > 0) { const m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = Math.floor((i - 1) / 26); } return s; }
+  function spalteIndex(b) { return b.split('').reduce((a, c) => a * 26 + c.charCodeAt(0) - 64, 0) - 1; }
+  function zeilenXml(sheet, nr) { const m = sheet.match(new RegExp('<row r="' + nr + '"[^>]*?(?:/>|>[\\s\\S]*?</row>)')); return m ? { xml: m[0], pos: m.index } : null; }
+  function zelleText(cXml, sst) {
+    const t = (cXml.match(/\bt="(\w+)"/) || [])[1], v = (cXml.match(/<v>([\s\S]*?)<\/v>/) || [])[1];
+    if (t === 's') return v != null ? sst[+v] || '' : '';
+    if (t === 'inlineStr') return xmlDecode(((cXml.match(/<t[^>]*>([\s\S]*?)<\/t>/) || [])[1]) || '');
+    return v != null ? xmlDecode(v) : '';
+  }
+  /** Zellen einer Zeile → { spaltenIndex: text } */
+  function zeileLesen(sheet, nr, sst) {
+    const z = zeilenXml(sheet, nr); const out = {}; if (!z) return out;
+    (z.xml.match(/<c r="[A-Z]+\d+"[^>]*?(?:\/>|>[\s\S]*?<\/c>)/g) || []).forEach(c => { out[spalteIndex(c.match(/r="([A-Z]+)/)[1])] = zelleText(c, sst); });
+    return out;
+  }
+  /** Zeile einer Aufgabe finden: erst die gemerkte Zeile prüfen, sonst Blatt nach Objekt + Aufgabe durchsuchen */
+  function listenZeileFinden(sheet, sst, f) {
+    const sp = f.listenSpalten || {}; const teile = String(f.listenKey || '').split('#'); const basis = teile[0], nth = +(teile[1] || 1);
+    const schluessel = z => normName(String(z[sp.objekt] || '').replace(/\n/g, ' ')).slice(0, 30) + '|' + normName(z[sp.aufgabe] || '').slice(0, 40);
+    if (f.listenZeile && nth === 1 && schluessel(zeileLesen(sheet, f.listenZeile, sst)) === basis) return f.listenZeile;
+    const nrs = (sheet.match(/<row r="(\d+)"/g) || []).map(r => +r.match(/\d+/)[0]);
+    let n = 0;
+    for (const nr of nrs) { if (schluessel(zeileLesen(sheet, nr, sst)) === basis && ++n === nth) return nr; }
+    return 0;
+  }
+  function datumSerial(iso) { return diffDays('1899-12-30', iso); }
+  /** Stil einer vorhandenen Datumszelle derselben Spalte (damit das Datum wie die anderen aussieht), sonst null */
+  function datumsStil(sheet, styles, spalte) {
+    const fmts = {}; (String(styles || '').match(/<numFmt [^>]*\/>/g) || []).forEach(n => { fmts[+(n.match(/numFmtId="(\d+)"/) || [])[1]] = xmlDecode((n.match(/formatCode="([^"]*)"/) || [])[1] || ''); });
+    const xfs = ((String(styles || '').match(/<cellXfs[^>]*>([\s\S]*?)<\/cellXfs>/) || [])[1] || '').match(/<xf [^>]*?(?:\/>|>[\s\S]*?<\/xf>)/g) || [];
+    const istDatum = s => { const x = xfs[s]; if (!x) return false; const id = +(x.match(/numFmtId="(\d+)"/) || [])[1]; if ((id >= 14 && id <= 22) || (id >= 45 && id <= 47)) return true; const c = (fmts[id] || '').replace(/"[^"]*"|\[[^\]]*\]/g, ''); return /[dmy]/i.test(c) && !/[#0?]/.test(c); };
+    const re = new RegExp('<c r="' + spalte + '\\d+"([^>]*?)>\\s*<v>\\d+(\\.\\d+)?</v>', 'g'); let m;
+    while ((m = re.exec(sheet))) { const st = (m[1].match(/\bs="(\d+)"/) || [])[1]; if (st && !/\bt="/.test(m[1]) && istDatum(+st)) return st; }
+    return null;
+  }
+  /** Zelle setzen: { datum } als Excel-Datum (mit Datumsstil) bzw. { text }; vorhandener Zellstil bleibt */
+  function zelleSetzen(sheet, ref, wert, datumStil) {
+    const nr = +ref.match(/\d+/)[0], col = ref.match(/[A-Z]+/)[0];
+    const z = zeilenXml(sheet, nr); if (!z) return null;
+    const alt = (z.xml.match(new RegExp('<c r="' + ref + '"[^>]*?(?:/>|>[\\s\\S]*?</c>)')) || [])[0];
+    let stil = alt ? (alt.match(/\bs="(\d+)"/) || [])[1] : null;
+    let neu;
+    if (wert.datum && datumStil) neu = '<c r="' + ref + '" s="' + datumStil + '"><v>' + datumSerial(wert.datum) + '</v></c>';
+    else {
+      const txt = wert.datum ? fmtDatum(wert.datum) : wert.text;
+      neu = (txt === '' || txt == null) ? '<c r="' + ref + '"' + (stil ? ' s="' + stil + '"' : '') + '/>'
+        : '<c r="' + ref + '"' + (stil ? ' s="' + stil + '"' : '') + ' t="inlineStr"><is><t xml:space="preserve">' + xmlEncode(txt) + '</t></is></c>';
+    }
+    let zeile;
+    if (alt) zeile = z.xml.replace(alt, () => neu);
+    else if (/\/>$/.test(z.xml)) zeile = z.xml.replace(/\/>$/, () => '>' + neu + '</row>');
+    else {
+      const idx = spalteIndex(col);
+      const nach = (z.xml.match(/<c r="[A-Z]+\d+"/g) || []).find(c => spalteIndex(c.match(/r="([A-Z]+)/)[1]) > idx);
+      zeile = nach ? z.xml.replace(nach, () => neu + nach) : z.xml.replace(/<\/row>$/, () => neu + '</row>');
+    }
+    return sheet.slice(0, z.pos) + zeile + sheet.slice(z.pos + z.xml.length);
+  }
+  /** Ausstehende Änderungen für die Excel-Liste: früheste offene WV (ohne Termin-WV) und nächster Schritt */
+  function excelAenderungen(data) {
+    return data.ih.filter(f => f.quelle === 'ih-liste' && f.listenSpalten && !['erledigt', 'abgerechnet'].includes(f.status)).map(f => {
+      const wv = data.wv.filter(w => w.bereich === 'ih' && w.refId === f.id && w.status === 'offen' && w.regel !== 'ih-liste-termin').sort((a, b) => a.datum.localeCompare(b.datum))[0];
+      const basis = f.listeWVBasis || f.listeWVDatum || '';
+      const a = { f, wv: wv && wv.datum !== basis && wv.datum !== (f.listeWVDatum || '') && f.listenSpalten.wv != null ? wv.datum : null,
+        schritt: (f.naechsterSchritt || '') !== (f.listeSchritt || '') && f.listenSpalten.schritt != null ? (f.naechsterSchritt || '') : null };
+      return a.wv || a.schritt != null ? a : null;
+    }).filter(Boolean);
+  }
+  /** Änderungen in das Blatt-XML schreiben → { sheet, ok:[], fehlt:[] } */
+  function excelBlattAktualisieren(sheet, sst, styles, aenderungen) {
+    const ok = [], fehlt = [], konflikt = [];
+    aenderungen.forEach(a => {
+      const nr = listenZeileFinden(sheet, sst, a.f);
+      if (!nr) { fehlt.push(a); return; }
+      const sp = a.f.listenSpalten;
+      // wurde die Zelle in Excel zwischenzeitlich von Hand geändert? Dann nicht überschreiben.
+      const z = zeileLesen(sheet, nr, sst);
+      if (a.wv) {
+        const cur = String(z[sp.wv] == null ? '' : z[sp.wv]).trim();
+        const curIso = /^\d+(\.\d+)?$/.test(cur) ? parseDatum(String(Math.floor(+cur))) : parseWV(cur, a.f.listeWVDatum || today());
+        if (curIso !== (a.f.listeWVDatum || '') && curIso !== a.wv) { konflikt.push(Object.assign(a, { zeile: nr, feld: 'WV', inExcel: cur })); return; }
+      }
+      if (a.schritt != null && String(z[sp.schritt] || '').replace(/\s+/g, ' ').trim() !== String(a.f.listeSchritt || '').replace(/\s+/g, ' ').trim()) {
+        konflikt.push(Object.assign(a, { zeile: nr, feld: 'nächster Schritt', inExcel: z[sp.schritt] || '' })); return;
+      }
+      if (a.wv) {
+        const col = spalteBuchstabe(sp.wv);
+        // Zusatz wie „Alimi“ oder „anrufen“ bleibt erhalten → als Text „05.10.2026 Alimi“, sonst echtes Excel-Datum
+        sheet = (a.f.wvText ? zelleSetzen(sheet, col + nr, { text: fmtDatum(a.wv) + ' ' + a.f.wvText }) : zelleSetzen(sheet, col + nr, { datum: a.wv }, datumsStil(sheet, styles, col))) || sheet;
+      }
+      if (a.schritt != null) sheet = zelleSetzen(sheet, spalteBuchstabe(sp.schritt) + nr, { text: a.schritt }) || sheet;
+      ok.push(Object.assign(a, { zeile: nr }));
+    });
+    return { sheet, ok, fehlt, konflikt };
+  }
+  /** Nach erfolgreichem Schreiben: Stand der Excel merken */
+  function excelGeschrieben(ok) { ok.forEach(a => { if (a.wv) { a.f.listeWVDatum = a.wv; a.f.listeWVBasis = a.wv; } if (a.schritt != null) a.f.listeSchritt = a.schritt; a.f.listenZeile = a.zeile; }); }
 
   /* ---------- E-Mail (.eml) ---------- */
   function asciiDateiname(s) {
@@ -1349,7 +1453,7 @@
     offenSumme, kuendigungsCheck, verteileZahlung, kautionsabrechnung, verjaehrung, kautionAmpel, ratenplan,
     monateText, defaultEmail, wvDatum, createWV, completeWV, snoozeWV, setWVDatum, plusEinheit, WV_EINHEITEN, defaultUI, closeWV, offeneWV, addVerlauf, wvRegeln, applyAction, findFall,
     getPath, vorlageZuHTML, vorlageZuText,
-    parseCSV, guessMapping, typAusText, importOPOS, normName, nameAufteilen, parseMietzeit, parseSaldo, parseWV, erkenneFormat, titelMieter, parseJsonBlatt, parseSaldenBlatt, findeMieter, saldoAbgleich, importSalden, parseTelefonliste, importTelefonliste, parseOposPdf, importOposPdf, nettoPosten, pdfUmlaute, typAusBuchung, monatsmieteSchaetzen, kwMontag, parseTermin, parseIhListe, adresseTeile, objektFinden, importIhListe, adresseZuMieter, emailsZuMieter, adressbuchVerknuepfen, whgNr, asciiDateiname, buildEML
+    parseCSV, guessMapping, typAusText, importOPOS, normName, nameAufteilen, parseMietzeit, parseSaldo, parseWV, erkenneFormat, titelMieter, parseJsonBlatt, parseSaldenBlatt, findeMieter, saldoAbgleich, importSalden, parseTelefonliste, importTelefonliste, parseOposPdf, importOposPdf, nettoPosten, pdfUmlaute, typAusBuchung, monatsmieteSchaetzen, kwMontag, parseTermin, parseIhListe, adresseTeile, objektFinden, importIhListe, sstLesen, zeileLesen, listenZeileFinden, zelleSetzen, datumsStil, excelAenderungen, excelBlattAktualisieren, excelGeschrieben, spalteBuchstabe, datumSerial, adresseZuMieter, emailsZuMieter, adressbuchVerknuepfen, whgNr, asciiDateiname, buildEML
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = Core;
   else root.Core = Core;

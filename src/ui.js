@@ -377,7 +377,7 @@
         '<select data-filter="dash.bereich"><option value="">alle Bereiche</option>' + Object.entries(C.BEREICHE).map(([v, l]) => '<option value="' + v + '"' + (f.bereich === v ? ' selected' : '') + '>' + l + '</option>').join('') + '</select>' +
         (UI().meinSB ? '<select data-change="dashSB"><option value="">nur meine (' + esc(UI().meinSB) + ')</option><option value="1"' + (f.alleSB ? ' selected' : '') + '>alle Sachbearbeiter</option></select>' : '') +
         '<select data-filter="dash.objekt"><option value="">alle Objekte</option>' + H.objektOptionen(false).map(([v, l]) => '<option value="' + v + '"' + (f.objekt === v ? ' selected' : '') + '>' + esc(l) + '</option>').join('') + '</select>' +
-        '<span class="sp"></span><button data-act="wvNeu">+ WV</button><button data-act="tagesliste">🖨 Tagesliste</button><button data-act="wvExcel">WV-Liste Excel</button></div>' +
+        '<span class="sp"></span>' + (App.ihExcelKnopf && C.excelAenderungen(d).length ? App.ihExcelKnopf() : '') + '<button data-act="wvNeu">+ WV</button><button data-act="tagesliste">🖨 Tagesliste</button><button data-act="wvExcel">WV-Liste Excel</button></div>' +
         App.wvTabelle(list, { leer: f.zeit === 'faellig' ? 'Nichts fällig – alles erledigt. 🎉' : 'Keine Einträge für diesen Filter.' }) + '</section>';
     }
   };

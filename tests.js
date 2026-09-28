@@ -267,6 +267,27 @@ sI = C.importIhListe(d, ihE2, { stand: '2026-10-01', heute: '2026-10-01' });
 eq([sI.geaendert, sI.erledigt, d.ih[0].naechsterSchritt, d.ih[1].status], [1, 1, 'Firma anrufen', 'erledigt'], 'Änderung übernommen, ausgeblendete Aufgabe erledigt');
 eq(C.offeneWV(d, 'ih', d.ih[1].id).length, 0, 'WV der erledigten Aufgabe geschlossen');
 
+section('In Excel-Liste zurückschreiben');
+const sx = '<worksheet><sheetData><row r="1"><c r="C1" t="s"><v>0</v></c><c r="E1" t="s"><v>1</v></c><c r="J1" t="s"><v>2</v></c></row>' +
+  '<row r="2" spans="1:11"><c r="C2" s="5" t="s"><v>3</v></c><c r="E2" s="5" t="s"><v>4</v></c><c r="I2" s="6" t="s"><v>5</v></c><c r="J2" s="9"><v>46282</v></c></row>' +
+  '<row r="3"><c r="C3" t="s"><v>6</v></c><c r="E3" t="s"><v>7</v></c><c r="K3" s="2"/></row></sheetData></worksheet>';
+const sstx = C.sstLesen('<sst><si><t>Objekt</t></si><si><t>Aufgabe</t></si><si><t>WV</t></si><si><t>Musterweg 12</t></si><si><t>Rollos &amp; Motor</t></si><si><t>Angebot holen</t></si><si><t>BR51</t></si><si><r><t>Büro</t></r><r><t>einheit</t></r></si></sst>');
+eq(sstx[4] + '|' + sstx[7], 'Rollos & Motor|Büroeinheit', 'Shared Strings inkl. Rich Text');
+const stx = '<styleSheet><numFmts count="1"><numFmt numFmtId="164" formatCode="dd/mm/yyyy"/></numFmts><cellXfs count="10"><xf numFmtId="0"/><xf numFmtId="0"/><xf numFmtId="0"/><xf numFmtId="0"/><xf numFmtId="0"/><xf numFmtId="0"/><xf numFmtId="0"/><xf numFmtId="0"/><xf numFmtId="0"/><xf numFmtId="164"/></cellXfs></styleSheet>';
+eq(C.datumsStil(sx, stx, 'J'), '9', 'Datumsstil der WV-Spalte gefunden');
+const sp = { objekt: 2, aufgabe: 4, wv: 9, schritt: 8 };
+const fa = { listenKey: C.normName('Musterweg 12').slice(0, 30) + '|' + C.normName('Rollos & Motor').slice(0, 40), listenZeile: 5, listenSpalten: sp, listeWVDatum: C.parseDatum('46282'), listeSchritt: 'Angebot holen' };
+const fb = { listenKey: 'BR51|' + C.normName('Büroeinheit'), listenZeile: 3, listenSpalten: sp, listeWVDatum: '', listeSchritt: '', wvText: 'anrufen' };
+eq([C.listenZeileFinden(sx, sstx, fa), C.listenZeileFinden(sx, sstx, fb)], [2, 3], 'Zeile gefunden (auch wenn gemerkte Zeile verrutscht ist)');
+const rx = C.excelBlattAktualisieren(sx, sstx, stx, [{ f: fa, wv: '2026-10-05', schritt: 'Firma X anrufen' }, { f: fb, wv: '2026-10-07', schritt: null }]);
+eq([rx.ok.length, rx.fehlt.length, rx.konflikt.length], [2, 0, 0], 'zwei Aufgaben geschrieben');
+eq(C.zeileLesen(rx.sheet, 2, sstx), { 2: 'Musterweg 12', 4: 'Rollos & Motor', 8: 'Firma X anrufen', 9: String(C.datumSerial('2026-10-05')) }, 'Zeile 2: Datum als Excel-Datum, Schritt als Text');
+truthy(rx.sheet.includes('<c r="J2" s="9"><v>46300</v></c>') && rx.sheet.includes('<c r="I2" s="6" t="inlineStr">'), 'Zellstile bleiben erhalten');
+eq(C.zeileLesen(rx.sheet, 3, sstx)[9], '07.10.2026 anrufen', 'Zusatztext bleibt: „07.10.2026 anrufen“, Zelle eingefügt');
+truthy(/<c r="E3"[^>]*>.*<\/c><c r="J3".*<c r="K3"/.test(rx.sheet), 'neue Zelle in richtiger Spaltenreihenfolge');
+const rk = C.excelBlattAktualisieren(C.zelleSetzen(sx, 'J2', { text: '01.12.' }), sstx, stx, [{ f: fa, wv: '2026-10-05', schritt: null }]);
+eq([rk.ok.length, rk.konflikt.length, rk.konflikt[0].inExcel], [0, 1, '01.12.'], 'in Excel von Hand geändert → nicht überschrieben');
+
 section('Vorlagen');
 const html = C.vorlageZuHTML('Hallo {{m.name}},\n\n{{postenTabelle}}\n\nSumme **{{s}}** <x>\nZeile {{fehlt}}', { m: { name: 'A & B' }, postenTabelle: '<table>\n<tr><td>1</td></tr></table>', s: '1,00 €' });
 eq(html, '<p>Hallo A &amp; B,</p>\n<table><tr><td>1</td></tr></table>\n<p>Summe <b>1,00 €</b> &lt;x&gt;<br>Zeile <mark>{{fehlt}}</mark></p>', 'vorlageZuHTML');

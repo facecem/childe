@@ -1406,7 +1406,7 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
       const wvText = wvRoh instanceof Date ? '' : zellTextIH(wvRoh).replace(/^(WV\s*)?\d{1,2}\.\s*(\d{1,2}\.?|[A-Za-zä]{3,}\.?)(\d{2,4})?\s*/i, '').trim();
       const basis = normName(objektText).slice(0, 30) + '|' + normName(aufgabe).slice(0, 40);
       zaehler[basis] = (zaehler[basis] || 0) + 1;
-      out.push({ key: basis + (zaehler[basis] > 1 ? '#' + zaehler[basis] : ''), zeile: zeilen ? zeilen[i] : i + 1, objektText, sb: zellTextIH(g('sb')), aufgabe,
+      out.push({ key: basis + (zaehler[basis] > 1 ? '#' + zaehler[basis] : ''), zeile: zeilen ? zeilen[i] : i + 1, spalten: { objekt: map.objekt, aufgabe: map.aufgabe, wv: map.wv, schritt: map.schritt }, objektText, sb: zellTextIH(g('sb')), aufgabe,
         titel: aufgabe.split('\n')[0].replace(/\s*\/\/.*$/, '').slice(0, 90) || objektText, material: zellTextIH(g('material')), termin: parseTermin(g('termin'), stand),
         prio, mieterInfo, schritt, wv: wvDatum, wvText, besonderheiten: zellTextIH(g('besonderheiten')) });
     });
@@ -1449,7 +1449,8 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
       gesehen.add(e.key);
       const ob = objektFinden(data, e.objektText);
       const felder = { objektText: e.objektText, sb: e.sb, prio: e.prio, material: e.material, naechsterSchritt: e.schritt, besonderheiten: e.besonderheiten, mieterInfo: e.mieterInfo,
-        termin: e.termin.datum || '', terminText: e.termin.text, wvText: e.wvText, beschreibung: e.aufgabe, titel: e.titel, listenZeile: e.zeile };
+        termin: e.termin.datum || '', terminText: e.termin.text, wvText: e.wvText, beschreibung: e.aufgabe, titel: e.titel, listenZeile: e.zeile,
+        listenBlatt: o.blatt || '', listenSpalten: e.spalten || null, listeWVDatum: e.wv || '', listeSchritt: e.schritt || '' };
       let f = data.ih.find(x => x.listenKey === e.key);
       if (!f) {
         f = Object.assign({ id: uid(), objektId: ob ? ob.id : '', mieterId: '', gemeldetAm: stand, dringlichkeit: /^(A\+|AAA|AA)$/.test(e.prio) ? 'hoch' : 'normal',
@@ -1473,8 +1474,9 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
       const wvTag = e.wv || (e.wvText && !offen('ih-liste').length ? heute : '');
       if (wvTag && !offen('ih-liste').some(w => w.datum === wvDatum(data, wvTag))) {
         data.wv.filter(w => w.refId === f.id && w.regel === 'ih-liste' && w.status === 'offen').forEach(w => { w.status = 'erledigt'; w.erledigtAm = heute; });
-        createWV(data, 'ih', f.id, wvTag, (e.wvText ? e.wvText + ' – ' : '') + (e.schritt || e.titel), { erstelltDurch: 'manuell', regel: 'ih-liste', heute }); st.wvNeu++;
-      }
+        const nw = createWV(data, 'ih', f.id, wvTag, (e.wvText ? e.wvText + ' – ' : '') + (e.schritt || e.titel), { erstelltDurch: 'manuell', regel: 'ih-liste', heute }); st.wvNeu++;
+        f.listeWVBasis = nw.datum; // Stand „wie aus der Liste“ – erst eine Änderung im Tool gilt als neu für die Excel
+      } else if (!e.wv && !e.wvText) f.listeWVBasis = '';
       // Termin
       if (e.termin.datum && !offen('ih-liste-termin').some(w => w.datum === wvDatum(data, e.termin.datum))) {
         data.wv.filter(w => w.refId === f.id && w.regel === 'ih-liste-termin' && w.status === 'offen').forEach(w => { w.status = 'erledigt'; w.erledigtAm = heute; });
@@ -1491,6 +1493,108 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
     data.meta.ihListeStand = stand;
     return st;
   }
+
+  /* ---------- In die Excel-Liste zurückschreiben (nur einzelne Zellen, Formatierung bleibt) ---------- */
+  function xmlDecode(t) { return String(t).replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&#(\d+);/g, (m, n) => String.fromCharCode(+n)).replace(/&amp;/g, '&'); }
+  function xmlEncode(t) { return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function sstLesen(xml) { return (String(xml || '').match(/<si>[\s\S]*?<\/si>/g) || []).map(si => (si.match(/<t[^>]*>([\s\S]*?)<\/t>/g) || []).map(t => xmlDecode(t.replace(/<[^>]+>/g, ''))).join('')); }
+  function spalteBuchstabe(i) { let s = ''; i++; while (i > 0) { const m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = Math.floor((i - 1) / 26); } return s; }
+  function spalteIndex(b) { return b.split('').reduce((a, c) => a * 26 + c.charCodeAt(0) - 64, 0) - 1; }
+  function zeilenXml(sheet, nr) { const m = sheet.match(new RegExp('<row r="' + nr + '"[^>]*?(?:/>|>[\\s\\S]*?</row>)')); return m ? { xml: m[0], pos: m.index } : null; }
+  function zelleText(cXml, sst) {
+    const t = (cXml.match(/\bt="(\w+)"/) || [])[1], v = (cXml.match(/<v>([\s\S]*?)<\/v>/) || [])[1];
+    if (t === 's') return v != null ? sst[+v] || '' : '';
+    if (t === 'inlineStr') return xmlDecode(((cXml.match(/<t[^>]*>([\s\S]*?)<\/t>/) || [])[1]) || '');
+    return v != null ? xmlDecode(v) : '';
+  }
+  /** Zellen einer Zeile → { spaltenIndex: text } */
+  function zeileLesen(sheet, nr, sst) {
+    const z = zeilenXml(sheet, nr); const out = {}; if (!z) return out;
+    (z.xml.match(/<c r="[A-Z]+\d+"[^>]*?(?:\/>|>[\s\S]*?<\/c>)/g) || []).forEach(c => { out[spalteIndex(c.match(/r="([A-Z]+)/)[1])] = zelleText(c, sst); });
+    return out;
+  }
+  /** Zeile einer Aufgabe finden: erst die gemerkte Zeile prüfen, sonst Blatt nach Objekt + Aufgabe durchsuchen */
+  function listenZeileFinden(sheet, sst, f) {
+    const sp = f.listenSpalten || {}; const teile = String(f.listenKey || '').split('#'); const basis = teile[0], nth = +(teile[1] || 1);
+    const schluessel = z => normName(String(z[sp.objekt] || '').replace(/\n/g, ' ')).slice(0, 30) + '|' + normName(z[sp.aufgabe] || '').slice(0, 40);
+    if (f.listenZeile && nth === 1 && schluessel(zeileLesen(sheet, f.listenZeile, sst)) === basis) return f.listenZeile;
+    const nrs = (sheet.match(/<row r="(\d+)"/g) || []).map(r => +r.match(/\d+/)[0]);
+    let n = 0;
+    for (const nr of nrs) { if (schluessel(zeileLesen(sheet, nr, sst)) === basis && ++n === nth) return nr; }
+    return 0;
+  }
+  function datumSerial(iso) { return diffDays('1899-12-30', iso); }
+  /** Stil einer vorhandenen Datumszelle derselben Spalte (damit das Datum wie die anderen aussieht), sonst null */
+  function datumsStil(sheet, styles, spalte) {
+    const fmts = {}; (String(styles || '').match(/<numFmt [^>]*\/>/g) || []).forEach(n => { fmts[+(n.match(/numFmtId="(\d+)"/) || [])[1]] = xmlDecode((n.match(/formatCode="([^"]*)"/) || [])[1] || ''); });
+    const xfs = ((String(styles || '').match(/<cellXfs[^>]*>([\s\S]*?)<\/cellXfs>/) || [])[1] || '').match(/<xf [^>]*?(?:\/>|>[\s\S]*?<\/xf>)/g) || [];
+    const istDatum = s => { const x = xfs[s]; if (!x) return false; const id = +(x.match(/numFmtId="(\d+)"/) || [])[1]; if ((id >= 14 && id <= 22) || (id >= 45 && id <= 47)) return true; const c = (fmts[id] || '').replace(/"[^"]*"|\[[^\]]*\]/g, ''); return /[dmy]/i.test(c) && !/[#0?]/.test(c); };
+    const re = new RegExp('<c r="' + spalte + '\\d+"([^>]*?)>\\s*<v>\\d+(\\.\\d+)?</v>', 'g'); let m;
+    while ((m = re.exec(sheet))) { const st = (m[1].match(/\bs="(\d+)"/) || [])[1]; if (st && !/\bt="/.test(m[1]) && istDatum(+st)) return st; }
+    return null;
+  }
+  /** Zelle setzen: { datum } als Excel-Datum (mit Datumsstil) bzw. { text }; vorhandener Zellstil bleibt */
+  function zelleSetzen(sheet, ref, wert, datumStil) {
+    const nr = +ref.match(/\d+/)[0], col = ref.match(/[A-Z]+/)[0];
+    const z = zeilenXml(sheet, nr); if (!z) return null;
+    const alt = (z.xml.match(new RegExp('<c r="' + ref + '"[^>]*?(?:/>|>[\\s\\S]*?</c>)')) || [])[0];
+    let stil = alt ? (alt.match(/\bs="(\d+)"/) || [])[1] : null;
+    let neu;
+    if (wert.datum && datumStil) neu = '<c r="' + ref + '" s="' + datumStil + '"><v>' + datumSerial(wert.datum) + '</v></c>';
+    else {
+      const txt = wert.datum ? fmtDatum(wert.datum) : wert.text;
+      neu = (txt === '' || txt == null) ? '<c r="' + ref + '"' + (stil ? ' s="' + stil + '"' : '') + '/>'
+        : '<c r="' + ref + '"' + (stil ? ' s="' + stil + '"' : '') + ' t="inlineStr"><is><t xml:space="preserve">' + xmlEncode(txt) + '</t></is></c>';
+    }
+    let zeile;
+    if (alt) zeile = z.xml.replace(alt, () => neu);
+    else if (/\/>$/.test(z.xml)) zeile = z.xml.replace(/\/>$/, () => '>' + neu + '</row>');
+    else {
+      const idx = spalteIndex(col);
+      const nach = (z.xml.match(/<c r="[A-Z]+\d+"/g) || []).find(c => spalteIndex(c.match(/r="([A-Z]+)/)[1]) > idx);
+      zeile = nach ? z.xml.replace(nach, () => neu + nach) : z.xml.replace(/<\/row>$/, () => neu + '</row>');
+    }
+    return sheet.slice(0, z.pos) + zeile + sheet.slice(z.pos + z.xml.length);
+  }
+  /** Ausstehende Änderungen für die Excel-Liste: früheste offene WV (ohne Termin-WV) und nächster Schritt */
+  function excelAenderungen(data) {
+    return data.ih.filter(f => f.quelle === 'ih-liste' && f.listenSpalten && !['erledigt', 'abgerechnet'].includes(f.status)).map(f => {
+      const wv = data.wv.filter(w => w.bereich === 'ih' && w.refId === f.id && w.status === 'offen' && w.regel !== 'ih-liste-termin').sort((a, b) => a.datum.localeCompare(b.datum))[0];
+      const basis = f.listeWVBasis || f.listeWVDatum || '';
+      const a = { f, wv: wv && wv.datum !== basis && wv.datum !== (f.listeWVDatum || '') && f.listenSpalten.wv != null ? wv.datum : null,
+        schritt: (f.naechsterSchritt || '') !== (f.listeSchritt || '') && f.listenSpalten.schritt != null ? (f.naechsterSchritt || '') : null };
+      return a.wv || a.schritt != null ? a : null;
+    }).filter(Boolean);
+  }
+  /** Änderungen in das Blatt-XML schreiben → { sheet, ok:[], fehlt:[] } */
+  function excelBlattAktualisieren(sheet, sst, styles, aenderungen) {
+    const ok = [], fehlt = [], konflikt = [];
+    aenderungen.forEach(a => {
+      const nr = listenZeileFinden(sheet, sst, a.f);
+      if (!nr) { fehlt.push(a); return; }
+      const sp = a.f.listenSpalten;
+      // wurde die Zelle in Excel zwischenzeitlich von Hand geändert? Dann nicht überschreiben.
+      const z = zeileLesen(sheet, nr, sst);
+      if (a.wv) {
+        const cur = String(z[sp.wv] == null ? '' : z[sp.wv]).trim();
+        const curIso = /^\d+(\.\d+)?$/.test(cur) ? parseDatum(String(Math.floor(+cur))) : parseWV(cur, a.f.listeWVDatum || today());
+        if (curIso !== (a.f.listeWVDatum || '') && curIso !== a.wv) { konflikt.push(Object.assign(a, { zeile: nr, feld: 'WV', inExcel: cur })); return; }
+      }
+      if (a.schritt != null && String(z[sp.schritt] || '').replace(/\s+/g, ' ').trim() !== String(a.f.listeSchritt || '').replace(/\s+/g, ' ').trim()) {
+        konflikt.push(Object.assign(a, { zeile: nr, feld: 'nächster Schritt', inExcel: z[sp.schritt] || '' })); return;
+      }
+      if (a.wv) {
+        const col = spalteBuchstabe(sp.wv);
+        // Zusatz wie „Alimi“ oder „anrufen“ bleibt erhalten → als Text „05.10.2026 Alimi“, sonst echtes Excel-Datum
+        sheet = (a.f.wvText ? zelleSetzen(sheet, col + nr, { text: fmtDatum(a.wv) + ' ' + a.f.wvText }) : zelleSetzen(sheet, col + nr, { datum: a.wv }, datumsStil(sheet, styles, col))) || sheet;
+      }
+      if (a.schritt != null) sheet = zelleSetzen(sheet, spalteBuchstabe(sp.schritt) + nr, { text: a.schritt }) || sheet;
+      ok.push(Object.assign(a, { zeile: nr }));
+    });
+    return { sheet, ok, fehlt, konflikt };
+  }
+  /** Nach erfolgreichem Schreiben: Stand der Excel merken */
+  function excelGeschrieben(ok) { ok.forEach(a => { if (a.wv) { a.f.listeWVDatum = a.wv; a.f.listeWVBasis = a.wv; } if (a.schritt != null) a.f.listeSchritt = a.schritt; a.f.listenZeile = a.zeile; }); }
 
   /* ---------- E-Mail (.eml) ---------- */
   function asciiDateiname(s) {
@@ -1524,7 +1628,7 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
     offenSumme, kuendigungsCheck, verteileZahlung, kautionsabrechnung, verjaehrung, kautionAmpel, ratenplan,
     monateText, defaultEmail, wvDatum, createWV, completeWV, snoozeWV, setWVDatum, plusEinheit, WV_EINHEITEN, defaultUI, closeWV, offeneWV, addVerlauf, wvRegeln, applyAction, findFall,
     getPath, vorlageZuHTML, vorlageZuText,
-    parseCSV, guessMapping, typAusText, importOPOS, normName, nameAufteilen, parseMietzeit, parseSaldo, parseWV, erkenneFormat, titelMieter, parseJsonBlatt, parseSaldenBlatt, findeMieter, saldoAbgleich, importSalden, parseTelefonliste, importTelefonliste, parseOposPdf, importOposPdf, nettoPosten, pdfUmlaute, typAusBuchung, monatsmieteSchaetzen, kwMontag, parseTermin, parseIhListe, adresseTeile, objektFinden, importIhListe, adresseZuMieter, emailsZuMieter, adressbuchVerknuepfen, whgNr, asciiDateiname, buildEML
+    parseCSV, guessMapping, typAusText, importOPOS, normName, nameAufteilen, parseMietzeit, parseSaldo, parseWV, erkenneFormat, titelMieter, parseJsonBlatt, parseSaldenBlatt, findeMieter, saldoAbgleich, importSalden, parseTelefonliste, importTelefonliste, parseOposPdf, importOposPdf, nettoPosten, pdfUmlaute, typAusBuchung, monatsmieteSchaetzen, kwMontag, parseTermin, parseIhListe, adresseTeile, objektFinden, importIhListe, sstLesen, zeileLesen, listenZeileFinden, zelleSetzen, datumsStil, excelAenderungen, excelBlattAktualisieren, excelGeschrieben, spalteBuchstabe, datumSerial, adresseZuMieter, emailsZuMieter, adressbuchVerknuepfen, whgNr, asciiDateiname, buildEML
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = Core;
   else root.Core = Core;
@@ -1545,7 +1649,8 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
     xlsx: 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
     html2canvas: 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js',
     pdfjs: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
-    pdfjsWorker: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
+    pdfjsWorker: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js',
+    jszip: 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js'
   };
   const _libs = {};
   function loadLib(name, globalName) {
@@ -2190,7 +2295,64 @@ Mit freundlichen Grüßen
     canvas.toBlob(b => download(b, C.asciiDateiname(name) + '.png'));
   }
 
-  root.Docs = { STANDARD, PLATZHALTER, BRIEF_CSS, vorlage, kontext, erzeuge, briefHTML, standalone, download, drucken, word, pdf, pdfBlob, emailEntwurf, emailOhneAnhang, excel, leseArbeitsmappe, lesePdfText, png, loadLib, tabelle };
+  /* ---------- Verbundene Dateien (File System Access API, Edge/Chrome) ---------- */
+  const DATEI_API = typeof root.showOpenFilePicker === 'function';
+  function idb() {
+    return new Promise((res, rej) => { const r = indexedDB.open('verwaltung_dateien', 1); r.onupgradeneeded = () => r.result.createObjectStore('h'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+  }
+  async function handleSpeichern(key, h) { const db = await idb(); return new Promise((res, rej) => { const t = db.transaction('h', 'readwrite'); t.objectStore('h').put(h, key); t.oncomplete = res; t.onerror = () => rej(t.error); }); }
+  async function handleLaden(key) { try { const db = await idb(); return await new Promise(res => { const r = db.transaction('h').objectStore('h').get(key); r.onsuccess = () => res(r.result || null); r.onerror = () => res(null); }); } catch (e) { return null; } }
+  /** Excel-Datei auswählen und für Lesen + Schreiben merken */
+  async function excelWaehlen(key) {
+    const [h] = await root.showOpenFilePicker({ types: [{ description: 'Excel-Liste', accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx', '.xlsm'] } }], multiple: false });
+    await handleSpeichern(key, h); return h;
+  }
+  async function zugriff(h, schreiben) {
+    const opt = { mode: schreiben ? 'readwrite' : 'read' };
+    if ((await h.queryPermission(opt)) === 'granted') return true;
+    return (await h.requestPermission(opt)) === 'granted';
+  }
+  /** Zellen im Blatt einer .xlsx ändern, ohne den Rest der Datei anzufassen → { blob, alt, ok, fehlt, konflikt } */
+  async function excelZellenAendern(file, blattName, aenderungen) {
+    const Z = await loadLib('jszip', 'JSZip');
+    const alt = await file.arrayBuffer();
+    const zip = await Z.loadAsync(alt);
+    const wb = await zip.file('xl/workbook.xml').async('string');
+    const rels = await zip.file('xl/_rels/workbook.xml.rels').async('string');
+    const sheets = (wb.match(/<sheet\b[^>]*>/g) || []).map(t => ({ name: (t.match(/\bname="([^"]*)"/) || [])[1] || '', rid: (t.match(/\br:id="([^"]*)"/) || [])[1] }));
+    const norm = s => String(s || '').replace(/&amp;/g, '&').trim().toLowerCase();
+    const sh = sheets.find(s => norm(s.name) === norm(blattName)) || (sheets.length === 1 ? sheets[0] : null);
+    if (!sh) throw new Error('Blatt „' + blattName + '“ nicht in der Datei gefunden');
+    const rel = (rels.match(new RegExp('<Relationship\\b[^>]*\\bId="' + sh.rid + '"[^>]*>')) || [])[0] || '';
+    let ziel = (rel.match(/\bTarget="([^"]*)"/) || [])[1] || '';
+    ziel = ziel.startsWith('/') ? ziel.slice(1) : 'xl/' + ziel.replace(/^\.\//, '');
+    const sheet = await zip.file(ziel).async('string');
+    const sst = zip.file('xl/sharedStrings.xml') ? C.sstLesen(await zip.file('xl/sharedStrings.xml').async('string')) : [];
+    const styles = zip.file('xl/styles.xml') ? await zip.file('xl/styles.xml').async('string') : '';
+    const r = C.excelBlattAktualisieren(sheet, sst, styles, aenderungen);
+    if (!r.ok.length) return Object.assign(r, { blob: null, alt });
+    zip.file(ziel, r.sheet);
+    // Berechnungskette verwerfen – Excel baut sie beim Öffnen neu auf (verhindert Reparaturmeldungen)
+    if (zip.file('xl/calcChain.xml')) {
+      zip.remove('xl/calcChain.xml');
+      zip.file('xl/_rels/workbook.xml.rels', rels.replace(/<Relationship\b[^>]*calcChain[^>]*\/>/g, ''));
+      const ct = await zip.file('[Content_Types].xml').async('string');
+      zip.file('[Content_Types].xml', ct.replace(/<Override\b[^>]*calcChain[^>]*\/>/g, ''));
+    }
+    const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    // Kontrolle: neue Datei muss sich lesen lassen und die geschriebenen Werte enthalten
+    const X = await loadLib('xlsx', 'XLSX');
+    const test = X.read(await blob.arrayBuffer(), { type: 'array', cellDates: true });
+    const ws = test.Sheets[test.SheetNames.find(n => norm(n) === norm(sh.name)) || test.SheetNames[0]];
+    r.ok.forEach(a => {
+      if (a.wv) { const c = ws[C.spalteBuchstabe(a.f.listenSpalten.wv) + a.zeile]; const v = c && (c.v instanceof Date ? C.parseDatum(c.v) : C.parseDatum(String(c.w || c.v))); if (v !== a.wv) throw new Error('Kontrolle fehlgeschlagen (Zeile ' + a.zeile + ') – nichts gespeichert'); }
+    });
+    return Object.assign(r, { blob, alt });
+  }
+  async function dateiSchreiben(h, daten) { const w = await h.createWritable(); await w.write(daten); await w.close(); }
+
+  root.Docs = { STANDARD, PLATZHALTER, BRIEF_CSS, vorlage, kontext, erzeuge, briefHTML, standalone, download, drucken, word, pdf, pdfBlob, emailEntwurf, emailOhneAnhang, excel, leseArbeitsmappe, lesePdfText, png, loadLib, tabelle,
+    DATEI_API, handleLaden, handleSpeichern, excelWaehlen, zugriff, excelZellenAendern, dateiSchreiben };
 })(window);
 
 /* ===== ui.js ===== */
@@ -2573,7 +2735,7 @@ Mit freundlichen Grüßen
         '<select data-filter="dash.bereich"><option value="">alle Bereiche</option>' + Object.entries(C.BEREICHE).map(([v, l]) => '<option value="' + v + '"' + (f.bereich === v ? ' selected' : '') + '>' + l + '</option>').join('') + '</select>' +
         (UI().meinSB ? '<select data-change="dashSB"><option value="">nur meine (' + esc(UI().meinSB) + ')</option><option value="1"' + (f.alleSB ? ' selected' : '') + '>alle Sachbearbeiter</option></select>' : '') +
         '<select data-filter="dash.objekt"><option value="">alle Objekte</option>' + H.objektOptionen(false).map(([v, l]) => '<option value="' + v + '"' + (f.objekt === v ? ' selected' : '') + '>' + esc(l) + '</option>').join('') + '</select>' +
-        '<span class="sp"></span><button data-act="wvNeu">+ WV</button><button data-act="tagesliste">🖨 Tagesliste</button><button data-act="wvExcel">WV-Liste Excel</button></div>' +
+        '<span class="sp"></span>' + (App.ihExcelKnopf && C.excelAenderungen(d).length ? App.ihExcelKnopf() : '') + '<button data-act="wvNeu">+ WV</button><button data-act="tagesliste">🖨 Tagesliste</button><button data-act="wvExcel">WV-Liste Excel</button></div>' +
         App.wvTabelle(list, { leer: f.zeit === 'faellig' ? 'Nichts fällig – alles erledigt. 🎉' : 'Keine Einträge für diesen Filter.' }) + '</section>';
     }
   };
@@ -3639,6 +3801,13 @@ Mit freundlichen Grüßen
           '<td>' + H.wvChip(H.naechsteWV('ih', x.id)) + '</td></tr>';
       }).join('') + '</tbody></table>';
   }
+  /** Knopf „In Excel eintragen (n)“ – nur wenn Aufgaben aus der Excel-Liste stammen */
+  function excelKnopf() {
+    if (!App.data.ih.some(x => x.quelle === 'ih-liste')) return '';
+    const n = C.excelAenderungen(App.data).length;
+    return '<button data-act="ihExcelSchreiben" class="' + (n ? 'primary' : '') + '" title="WV und nächste Schritte aus dem Tool in die Instandhaltungsliste (Excel) schreiben">⇄ In Excel eintragen' + (n ? ' (' + n + ')' : '') + '</button>';
+  }
+  App.ihExcelKnopf = excelKnopf;
   function gefiltert() {
     const f = App.f.ih, q = f.q.toLowerCase();
     const prioRang = x => ({ 'A+': 0, AAA: 0, AA: 1, A: 2, B: 3, C: 4 }[x.prio] ?? ({ notfall: 0, hoch: 1, normal: 5 }[x.dringlichkeit]));
@@ -3657,7 +3826,7 @@ Mit freundlichen Grüßen
         '<select data-filter="ih.status"><option value="aktiv"' + (f.status === 'aktiv' ? ' selected' : '') + '>aktive</option><option value=""' + (f.status === '' ? ' selected' : '') + '>alle</option>' +
         REIHE.map(s => '<option value="' + s + '"' + (f.status === s ? ' selected' : '') + '>' + ST[s] + '</option>').join('') + '</select>' +
         '<span class="muted">' + list.length + ' Aufgaben</span><span class="sp"></span>' + (App.data.meta.ihListeStand ? '<small class="muted">Liste eingelesen ' + fmtDatum(App.data.meta.ihListeStand) + '</small>' : '') +
-        '<button data-act="ihListeImport">⇪ Instandhaltungsliste einlesen</button><button data-act="ihExcel">Liste Excel</button><button data-act="ihPng">PNG</button><button class="primary" data-act="ihNeu">+ Aufgabe / Schaden</button></div>' +
+        '<button data-act="ihListeImport">⇪ Instandhaltungsliste einlesen</button>' + excelKnopf() + '<button data-act="ihExcel">Liste Excel</button><button data-act="ihPng">PNG</button><button class="primary" data-act="ihNeu">+ Aufgabe / Schaden</button></div>' +
         (list.length ? tabelle(list) : H.leer('Keine Aufgaben für diesen Filter. Die bestehende Excel-Liste lässt sich über „⇪ Instandhaltungsliste einlesen“ übernehmen.')) + '</section>';
     },
     detail(id) {
@@ -3764,14 +3933,84 @@ Mit freundlichen Grüßen
       if (v.wv) C.createWV(App.data, 'ih', f.id, v.wv, v.naechsterSchritt || f.titel, { erstelltDurch: 'manuell' });
       App.commit();
     },
+    async ihExcelSchreiben() {
+      const aend = C.excelAenderungen(App.data);
+      if (!aend.length) return App.toast('Keine offenen Änderungen – die Excel ist auf dem Stand des Tools.');
+      let h = D.DATEI_API ? await D.handleLaden('ihListe') : null;
+      const zeilen = aend.map(a => '<tr><td>' + esc(objektName(a.f)) + '</td><td>' + esc(a.f.titel) + '</td><td class="nw">' + (a.wv ? fmtDatum(a.f.listeWVDatum) + ' → <b>' + fmtDatum(a.wv) + '</b>' : '') + '</td><td>' + (a.schritt != null ? '<b>' + esc(a.schritt || '(leer)') + '</b>' : '') + '</td></tr>').join('');
+      const r = await App.modal({ title: '⇄ In die Instandhaltungsliste eintragen', wide: true,
+        body: '<p>' + aend.length + ' Aufgabe(n) mit geänderter WV bzw. nächstem Schritt' + (h ? ' → <b>' + esc(h.name) + '</b>' : '') + ':</p><div class="scrollx"><table class="tbl small"><thead><tr><th>Objekt</th><th>Aufgabe</th><th>WV</th><th>nächster Schritt</th></tr></thead><tbody>' + zeilen + '</tbody></table></div>' +
+          '<p class="small muted">Es werden nur die Zellen „WV“ und „nächster Schritt“ in den jeweiligen Zeilen geändert – Formatierung, ausgeblendete Zeilen und andere Blätter bleiben unverändert. Vorher wird geprüft, ob in der Zeile noch dieselbe Aufgabe steht; wurde die Zelle in Excel inzwischen von Hand geändert, wird sie nicht überschrieben. ' +
+          '<b>Die Excel-Datei muss dafür geschlossen sein.</b></p>' + (D.DATEI_API ? '' : '<p class="small">Dein Browser kann nicht direkt in Dateien schreiben (nur Edge/Chrome). Du wählst die Datei aus und bekommst eine aktualisierte Kopie zum Speichern.</p>'),
+        buttons: [{ label: 'Abbrechen', value: '' }, { label: D.DATEI_API ? (h ? '⇄ In ' + esc(h.name) + ' eintragen' : 'Excel-Datei wählen & eintragen') : 'Datei wählen …', value: 'ok', cls: 'primary' }] });
+      if (r.action !== 'ok') return;
+      let datei;
+      try {
+        if (D.DATEI_API) {
+          if (!h) h = await D.excelWaehlen('ihListe');
+          if (!await D.zugriff(h, true)) return App.toast('Schreibzugriff auf die Datei wurde nicht erlaubt.', 'warn');
+          datei = await h.getFile();
+        } else {
+          const v = await App.formModal('Instandhaltungsliste wählen', [{ k: 'datei', l: 'Excel-Datei', t: 'file', accept: '.xlsx,.xlsm', full: true }], {}, { ok: 'Eintragen' });
+          if (!v || !v.datei[0]) return; datei = v.datei[0];
+        }
+      } catch (e) { if (e.name === 'AbortError') return; return App.toast('Datei konnte nicht geöffnet werden: ' + e.message, 'err', 9000); }
+      const vorher = aend.map(a => ({ f: a.f, wv: a.f.listeWVDatum, basis: a.f.listeWVBasis, schritt: a.f.listeSchritt, zeile: a.f.listenZeile }));
+      const gruppen = {}; aend.forEach(a => { (gruppen[a.f.listenBlatt || ''] = gruppen[a.f.listenBlatt || ''] || []).push(a); });
+      let res = { ok: [], fehlt: [], konflikt: [] }, alt = null, blob = null;
+      try {
+        for (const blatt of Object.keys(gruppen)) {
+          const r2 = await D.excelZellenAendern(blob ? new File([blob], datei.name) : datei, blatt, gruppen[blatt]);
+          if (!alt) alt = r2.alt; if (r2.blob) blob = r2.blob;
+          res.ok.push(...r2.ok); res.fehlt.push(...r2.fehlt); res.konflikt.push(...r2.konflikt);
+        }
+        if (blob) {
+          if (D.DATEI_API) await D.dateiSchreiben(h, blob);
+          else D.download(blob, datei.name);
+        }
+      } catch (e) {
+        const gesperrt = /NoModificationAllowed|InvalidState|NotReadable|InvalidModification/.test(e.name) || /lock|gesperrt|in use/i.test(e.message);
+        return App.toast(gesperrt ? 'Die Datei ist gerade geöffnet (Excel?) oder gesperrt. Bitte Excel schließen und erneut versuchen. Nichts wurde geändert.' : 'Nicht gespeichert: ' + e.message, 'err', 12000);
+      }
+      C.excelGeschrieben(res.ok);
+      res.ok.forEach(a => C.addVerlauf(App.data, 'ih', a.f.id, 'excel', 'In Instandhaltungsliste eingetragen (Zeile ' + a.zeile + '): ' + [a.wv ? 'WV ' + fmtDatum(a.wv) : '', a.schritt != null ? 'nächster Schritt „' + a.schritt + '“' : ''].filter(Boolean).join(', ')));
+      App.data.meta.ihExcelGeschrieben = new Date().toISOString();
+      App.commit();
+      const rr = await App.modal({ title: res.ok.length ? '✓ In Excel eingetragen' : 'Nichts eingetragen', body:
+        '<ul>' + (res.ok.length ? '<li><b>' + res.ok.length + '</b> Aufgabe(n) in ' + esc(datei.name) + (D.DATEI_API ? ' gespeichert' : ' – aktualisierte Datei heruntergeladen, bitte die alte Datei damit ersetzen') + '</li>' : '') +
+        (res.konflikt.length ? '<li class="rot-t">' + res.konflikt.length + ' nicht überschrieben, weil in Excel inzwischen von Hand geändert: ' + res.konflikt.map(a => esc(a.f.titel) + ' (Zeile ' + a.zeile + ', ' + a.feld + ' in Excel: „' + esc(a.inExcel) + '“)').join('; ') + ' – bitte Liste neu einlesen</li>' : '') +
+        (res.fehlt.length ? '<li class="rot-t">' + res.fehlt.length + ' Aufgabe(n) in der Excel nicht mehr gefunden: ' + res.fehlt.map(a => esc(a.f.titel)).join('; ') + '</li>' : '') + '</ul>',
+        buttons: [...(D.DATEI_API && blob ? [{ label: '↶ Rückgängig', value: 'undo', cls: 'del' }] : []), { label: 'OK', value: '' }] });
+      if (rr.action === 'undo') {
+        try { await D.dateiSchreiben(h, alt); } catch (e) { return App.toast('Rückgängig nicht möglich: ' + e.message, 'err', 9000); }
+        vorher.forEach(x => { x.f.listeWVDatum = x.wv; x.f.listeWVBasis = x.basis; x.f.listeSchritt = x.schritt; x.f.listenZeile = x.zeile; C.addVerlauf(App.data, 'ih', x.f.id, 'excel', 'Eintrag in Excel rückgängig gemacht'); });
+        App.commit(); App.toast('Excel-Datei wiederhergestellt.');
+      }
+    },
     async ihListeImport() {
-      const v = await App.formModal('Instandhaltungsliste einlesen', [{ k: 'datei', l: 'Excel-Datei (TO-DO-Liste)', t: 'file', accept: '.xlsx,.xlsm,.xls,.ods', full: true },
+      const offen = C.excelAenderungen(App.data).length;
+      if (offen && await App.confirm(offen + ' Änderung(en) aus dem Tool stehen noch nicht in der Excel (WV / nächster Schritt). Beim Einlesen würden sie mit dem Stand der Excel überschrieben.<br><b>Zuerst in die Excel eintragen?</b>', 'Ja, erst eintragen', 'Nein, einlesen')) {
+        await App.act.ihExcelSchreiben(); if (C.excelAenderungen(App.data).length) return;
+      }
+      const h = D.DATEI_API ? await D.handleLaden('ihListe') : null;
+      const intro = '<p class="muted">Liest jede <b>sichtbare</b> Zeile mit Objekt und Aufgabe – <b>ausgeblendete Zeilen werden ignoriert</b>. Spalten: Objekt · SB · Aufgabe · benötigtes Material · Termin · Mieter/Prio · nächster Schritt · WV · Besonderheiten. ' +
+        'WV und Termine werden Wiedervorlagen. Erneut einlesen gleicht ab: Änderungen landen im Verlauf, Aufgaben die nicht mehr sichtbar sind gelten als erledigt.</p>' +
+        (D.DATEI_API ? '<p class="small">Die Datei wird dabei <b>verbunden</b>: WV und nächste Schritte aus dem Tool lassen sich danach per „⇄ In Excel eintragen“ direkt in diese Datei schreiben.</p>' : '');
+      const v = await App.formModal('Instandhaltungsliste einlesen', [
+        ...(D.DATEI_API ? [] : [{ k: 'datei', l: 'Excel-Datei (TO-DO-Liste)', t: 'file', accept: '.xlsx,.xlsm,.xls,.ods', full: true }]),
         { k: 'stand', l: 'Stand (für WV-Daten ohne Jahr)', t: 'date', d: C.today(), req: true }], {},
-        { ok: 'Weiter', intro: '<p class="muted">Liest jede <b>sichtbare</b> Zeile mit Objekt und Aufgabe – <b>ausgeblendete Zeilen werden ignoriert</b>. Spalten: Objekt · SB · Aufgabe · benötigtes Material · Termin · Mieter/Prio · nächster Schritt · WV · Besonderheiten. ' +
-          'WV und Termine werden Wiedervorlagen. Erneut einlesen gleicht ab: Änderungen landen im Verlauf, Aufgaben die nicht mehr sichtbar sind gelten als erledigt.</p>' });
-      if (!v || !v.datei[0]) return;
+        { ok: D.DATEI_API ? (h ? 'Andere Datei wählen …' : 'Datei wählen …') : 'Weiter', intro, extra: h ? [{ label: '⇪ ' + esc(h.name) + ' neu einlesen', value: 'verbunden', cls: 'primary' }] : [] });
+      if (!v) return;
+      let datei;
+      try {
+        if (D.DATEI_API) {
+          const hh = v._action === 'verbunden' ? h : await D.excelWaehlen('ihListe');
+          if (!await D.zugriff(hh, false)) return App.toast('Kein Zugriff auf die Datei erlaubt.', 'warn');
+          datei = await hh.getFile();
+        } else { datei = v.datei[0]; if (!datei) return; }
+      } catch (e) { if (e.name === 'AbortError') return; return App.toast('Datei konnte nicht geöffnet werden: ' + e.message, 'err', 9000); }
       let blaetter;
-      try { blaetter = await D.leseArbeitsmappe(v.datei[0]); } catch (e) { return App.toast('Datei konnte nicht gelesen werden: ' + e.message, 'err', 9000); }
+      try { blaetter = await D.leseArbeitsmappe(datei); } catch (e) { return App.toast('Datei konnte nicht gelesen werden: ' + e.message, 'err', 9000); }
       blaetter = blaetter.map(b => Object.assign(b, { aufgaben: C.parseIhListe(b.rows, v.stand, b.zeilen) })).filter(b => b.aufgaben.length);
       if (!blaetter.length) return App.toast('Keine Aufgaben gefunden – es braucht eine Kopfzeile mit „Objekt“ und „Aufgabe“.', 'err', 9000);
       let blatt = blaetter[0];

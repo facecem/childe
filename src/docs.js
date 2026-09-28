@@ -12,7 +12,8 @@
     xlsx: 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
     html2canvas: 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js',
     pdfjs: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
-    pdfjsWorker: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
+    pdfjsWorker: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js',
+    jszip: 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js'
   };
   const _libs = {};
   function loadLib(name, globalName) {
@@ -657,5 +658,62 @@ Mit freundlichen Grüßen
     canvas.toBlob(b => download(b, C.asciiDateiname(name) + '.png'));
   }
 
-  root.Docs = { STANDARD, PLATZHALTER, BRIEF_CSS, vorlage, kontext, erzeuge, briefHTML, standalone, download, drucken, word, pdf, pdfBlob, emailEntwurf, emailOhneAnhang, excel, leseArbeitsmappe, lesePdfText, png, loadLib, tabelle };
+  /* ---------- Verbundene Dateien (File System Access API, Edge/Chrome) ---------- */
+  const DATEI_API = typeof root.showOpenFilePicker === 'function';
+  function idb() {
+    return new Promise((res, rej) => { const r = indexedDB.open('verwaltung_dateien', 1); r.onupgradeneeded = () => r.result.createObjectStore('h'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+  }
+  async function handleSpeichern(key, h) { const db = await idb(); return new Promise((res, rej) => { const t = db.transaction('h', 'readwrite'); t.objectStore('h').put(h, key); t.oncomplete = res; t.onerror = () => rej(t.error); }); }
+  async function handleLaden(key) { try { const db = await idb(); return await new Promise(res => { const r = db.transaction('h').objectStore('h').get(key); r.onsuccess = () => res(r.result || null); r.onerror = () => res(null); }); } catch (e) { return null; } }
+  /** Excel-Datei auswählen und für Lesen + Schreiben merken */
+  async function excelWaehlen(key) {
+    const [h] = await root.showOpenFilePicker({ types: [{ description: 'Excel-Liste', accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx', '.xlsm'] } }], multiple: false });
+    await handleSpeichern(key, h); return h;
+  }
+  async function zugriff(h, schreiben) {
+    const opt = { mode: schreiben ? 'readwrite' : 'read' };
+    if ((await h.queryPermission(opt)) === 'granted') return true;
+    return (await h.requestPermission(opt)) === 'granted';
+  }
+  /** Zellen im Blatt einer .xlsx ändern, ohne den Rest der Datei anzufassen → { blob, alt, ok, fehlt, konflikt } */
+  async function excelZellenAendern(file, blattName, aenderungen) {
+    const Z = await loadLib('jszip', 'JSZip');
+    const alt = await file.arrayBuffer();
+    const zip = await Z.loadAsync(alt);
+    const wb = await zip.file('xl/workbook.xml').async('string');
+    const rels = await zip.file('xl/_rels/workbook.xml.rels').async('string');
+    const sheets = (wb.match(/<sheet\b[^>]*>/g) || []).map(t => ({ name: (t.match(/\bname="([^"]*)"/) || [])[1] || '', rid: (t.match(/\br:id="([^"]*)"/) || [])[1] }));
+    const norm = s => String(s || '').replace(/&amp;/g, '&').trim().toLowerCase();
+    const sh = sheets.find(s => norm(s.name) === norm(blattName)) || (sheets.length === 1 ? sheets[0] : null);
+    if (!sh) throw new Error('Blatt „' + blattName + '“ nicht in der Datei gefunden');
+    const rel = (rels.match(new RegExp('<Relationship\\b[^>]*\\bId="' + sh.rid + '"[^>]*>')) || [])[0] || '';
+    let ziel = (rel.match(/\bTarget="([^"]*)"/) || [])[1] || '';
+    ziel = ziel.startsWith('/') ? ziel.slice(1) : 'xl/' + ziel.replace(/^\.\//, '');
+    const sheet = await zip.file(ziel).async('string');
+    const sst = zip.file('xl/sharedStrings.xml') ? C.sstLesen(await zip.file('xl/sharedStrings.xml').async('string')) : [];
+    const styles = zip.file('xl/styles.xml') ? await zip.file('xl/styles.xml').async('string') : '';
+    const r = C.excelBlattAktualisieren(sheet, sst, styles, aenderungen);
+    if (!r.ok.length) return Object.assign(r, { blob: null, alt });
+    zip.file(ziel, r.sheet);
+    // Berechnungskette verwerfen – Excel baut sie beim Öffnen neu auf (verhindert Reparaturmeldungen)
+    if (zip.file('xl/calcChain.xml')) {
+      zip.remove('xl/calcChain.xml');
+      zip.file('xl/_rels/workbook.xml.rels', rels.replace(/<Relationship\b[^>]*calcChain[^>]*\/>/g, ''));
+      const ct = await zip.file('[Content_Types].xml').async('string');
+      zip.file('[Content_Types].xml', ct.replace(/<Override\b[^>]*calcChain[^>]*\/>/g, ''));
+    }
+    const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    // Kontrolle: neue Datei muss sich lesen lassen und die geschriebenen Werte enthalten
+    const X = await loadLib('xlsx', 'XLSX');
+    const test = X.read(await blob.arrayBuffer(), { type: 'array', cellDates: true });
+    const ws = test.Sheets[test.SheetNames.find(n => norm(n) === norm(sh.name)) || test.SheetNames[0]];
+    r.ok.forEach(a => {
+      if (a.wv) { const c = ws[C.spalteBuchstabe(a.f.listenSpalten.wv) + a.zeile]; const v = c && (c.v instanceof Date ? C.parseDatum(c.v) : C.parseDatum(String(c.w || c.v))); if (v !== a.wv) throw new Error('Kontrolle fehlgeschlagen (Zeile ' + a.zeile + ') – nichts gespeichert'); }
+    });
+    return Object.assign(r, { blob, alt });
+  }
+  async function dateiSchreiben(h, daten) { const w = await h.createWritable(); await w.write(daten); await w.close(); }
+
+  root.Docs = { STANDARD, PLATZHALTER, BRIEF_CSS, vorlage, kontext, erzeuge, briefHTML, standalone, download, drucken, word, pdf, pdfBlob, emailEntwurf, emailOhneAnhang, excel, leseArbeitsmappe, lesePdfText, png, loadLib, tabelle,
+    DATEI_API, handleLaden, handleSpeichern, excelWaehlen, zugriff, excelZellenAendern, dateiSchreiben };
 })(window);
