@@ -20,12 +20,13 @@ Daten aus dem Prototyp (`opos_assistent_v1`) werden beim ersten Start automatisc
 
 | Bereich | Inhalt |
 |---|---|
-| **Dashboard** | Kacheln für überfällige WV, heute, 7 Tage, je Bereich, Rückstand gesamt und Kautionen mit Verjährung < 30 Tage. Eine WV-Liste über alle Bereiche, filterbar nach Zeitraum, Bereich und Objekt, mit +3/+7/+14, „erledigt“ und „erledigt + neue WV“. Tagesliste drucken, WV-Liste als Excel |
+| **Dashboard** | Kacheln für überfällige WV, heute, 7 Tage, je Bereich, Rückstand gesamt und Kautionen mit Verjährung < 30 Tage. Eine WV-Liste über alle Bereiche, filterbar nach Zeitraum, Bereich und Objekt, mit Schnell-Buttons **+1 +2 +3 +4** (anpassbar) und **+…** für eine freie Anzahl an Tagen, Werktagen, Wochen oder Monaten bzw. ein festes Datum, dazu „erledigt“ und „erledigt + neue WV“. Tagesliste drucken, WV-Liste als Excel |
 | **OPOS** | Stufen Neu → Zahlungserinnerung → 1. Mahnung → Letzte Mahnung → Kündigung → Anwalt → Erledigt, dazu Abmahnung als Nebenpfad. Kündigungscheck nach § 543 Abs. 2 S. 1 Nr. 3 BGB (Prüfhinweis). Zahlungen werden auf die ältesten Posten zuerst verrechnet. Ratenzahlung mit einer WV je Rate. **Mahnlauf** für mehrere Fälle auf einmal. **OPOS-Liste einlesen** (siehe unten) |
 | **Instandhaltung** | Schadensaufnahme mit Fotos (Drag & Drop, komprimiert). Anfrage an bis zu 3 Handwerker, je ein E-Mail-Entwurf mit Fotos. Angebotsvergleich, Auftrag, Terminankündigung nach § 555a BGB, Rechnung, Weiterbelastung an den Mieter (landet auf Wunsch direkt als offener Posten im OPOS). Liste als Excel (ein Blatt je Objekt) oder PNG |
 | **Kaution** | Rechner: Kaution + Zinsen − Einbehalte − NK-Einbehalt = Auszahlung. Fristen-Ampel und Verjährung nach § 548 BGB. Schreiben: Abrechnung, Anforderung der Bankverbindung, Teilauszahlung. Auszahlungsliste als Excel für die Buchhaltung |
 | **Schreiben** | Briefrahmen nach DIN 5008, Calibri 11 pt. Vorschau ist direkt bearbeitbar. Export als PDF, Word, Druck oder **PDF + E-Mail-Entwurf** (`.eml` mit `X-Unsent: 1`, öffnet in Outlook als Entwurf). Ohne Internet: Word + `mailto:` + Text in der Zwischenablage. Danach fragt das Tool „als versendet verbuchen?“ und legt Verlauf und WV an |
 | **Vorlagen** | Alle Textbausteine sind unter Einstellungen editierbar (Platzhalter wie `{{mieter.nachname}}`, `{{frist}}`, `{{postenTabelle}}`), mit Live-Vorschau und „auf Standard zurücksetzen“ |
+| **Anpassen** | Einstellungen → Anpassen: WV-Schnell-Buttons (Werte und Einheit), Standard-Abstand für neue WV, Vorschlagsliste für WV-Aufgaben, Gewerke-Liste, sichtbare Bereiche, Dashboard-Kacheln und Startfilter, Startansicht, Warnschwelle für die Kautionsverjährung, Akzent- und Kopffarbe, Schriftgröße, kompakte Tabellen |
 | **Komfort** | Globale Suche (<kbd>Strg</kbd>+<kbd>K</kbd> oder <kbd>/</kbd>), <kbd>Alt</kbd>+<kbd>1</kbd>…<kbd>7</kbd> für die Bereiche, <kbd>Alt</kbd>+<kbd>N</kbd> für einen neuen Eintrag, <kbd>Esc</kbd> für zurück |
 
 ### OPOS-Liste einlesen

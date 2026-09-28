@@ -7,9 +7,10 @@
   const { esc, fmtEUR, fmtDatum } = C;
   const KS = C.K_STATUS;
   const ART = { konto: 'Kautionskonto', bar: 'Barkaution', buergschaft: 'Bürgschaft' };
-  const AMPEL = { rot: 'Verjährung < 30 Tage!', gelb: 'Abrechnung überfällig (> 3 Monate)', gruen: 'im Zeitplan', grau: '–' };
+  const AMPEL = { rot: 'Verjährung bald!', gelb: 'Abrechnung überfällig (> 3 Monate)', gruen: 'im Zeitplan', grau: '–' };
 
-  function ampelDot(k) { const a = C.kautionAmpel(k); return '<span class="dot ' + a + '" title="' + AMPEL[a] + '"></span>'; }
+  const warn = () => Number(App.ui().verjaehrungWarnTage) || 30;
+  function ampelDot(k) { const a = C.kautionAmpel(k, C.today(), warn()); return '<span class="dot ' + a + '" title="' + AMPEL[a] + '"></span>'; }
 
   App.views.kaution = {
     render() {
@@ -26,14 +27,14 @@
             const m = H.mieter(k.mieterId) || {}; const o = H.objekt(m.objektId) || {}; const v = C.verjaehrung(k); const r = C.kautionsabrechnung(k);
             return '<tr class="klick" data-act="openFall" data-b="kaution" data-id="' + k.id + '"><td>' + ampelDot(k) + '</td><td><b>' + esc(C.mieterName(m)) + '</b></td><td>' + esc(o.bezeichnung || '–') + (m.whg ? ' · ' + esc(m.whg) : '') + '</td>' +
               '<td class="r">' + fmtEUR(k.betrag) + '</td><td>' + ART[k.art] + '</td><td>' + fmtDatum(k.auszugAm) + '</td><td>' + fmtDatum(k.uebergabeAm) + '</td>' +
-              '<td>' + (v ? fmtDatum(v.ende) + ' <small class="' + (v.restTage < 30 ? 'rot-t' : 'muted') + '">(' + (v.restTage >= 0 ? 'noch ' + v.restTage + ' T' : 'abgelaufen') + ')</small>' : '–') + '</td>' +
+              '<td>' + (v ? fmtDatum(v.ende) + ' <small class="' + (v.restTage < warn() ? 'rot-t' : 'muted') + '">(' + (v.restTage >= 0 ? 'noch ' + v.restTage + ' T' : 'abgelaufen') + ')</small>' : '–') + '</td>' +
               '<td>' + H.chip(KS[k.status], 'ks-' + k.status) + '</td><td class="r">' + (k.auszugAm ? fmtEUR(r.auszahlung) : '') + '</td><td>' + H.wvChip(H.naechsteWV('kaution', k.id)) + '</td></tr>';
           }).join('') + '</tbody></table>' : H.leer('Keine Kautionsfälle.')) + '</section>';
     },
     detail(id) {
       const k = H.fall('kaution', id); if (!k) { App.detail = null; return App.views.kaution.render(); }
       const m = H.mieter(k.mieterId) || {}; const o = H.objekt(m.objektId) || {};
-      const v = C.verjaehrung(k); const r = C.kautionsabrechnung(k); const a = C.kautionAmpel(k);
+      const v = C.verjaehrung(k); const r = C.kautionsabrechnung(k); const a = C.kautionAmpel(k, C.today(), warn());
       const b = (act, label, cls = '') => '<button class="' + cls + '" data-act="' + act + '" data-id="' + id + '">' + label + '</button>';
       const next = !k.auszugAm ? 'kautionAuszug' : k.status === 'in_pruefung' ? 'kautionAbrechnung' : k.status === 'abgerechnet' ? 'kautionAusgezahlt' : '';
       const c = x => (x === next ? 'primary' : '');
@@ -41,7 +42,7 @@
         '<span class="muted">' + esc(o.bezeichnung || '') + (m.whg ? ' · ' + esc(m.whg) : '') + '</span><span class="sp"></span>' +
         '<button class="s" data-act="kautionEdit" data-id="' + id + '">Bearbeiten</button><button class="s del" data-act="kautionDel" data-id="' + id + '">Löschen</button></div>' +
         '<div class="cols3"><section class="card ampel-' + a + '"><h3>Fristen</h3>' +
-        (v ? '<div class="big ' + (v.restTage < 30 ? 'rot-t' : '') + '">' + (v.restTage >= 0 ? 'noch ' + v.restTage + ' Tage' : 'seit ' + (-v.restTage) + ' Tagen abgelaufen') + '</div>' +
+        (v ? '<div class="big ' + (v.restTage < warn() ? 'rot-t' : '') + '">' + (v.restTage >= 0 ? 'noch ' + v.restTage + ' Tage' : 'seit ' + (-v.restTage) + ' Tagen abgelaufen') + '</div>' +
           '<div>bis zur <b>Verjährung § 548 BGB</b> am <b>' + fmtDatum(v.ende) + '</b></div><p class="small muted">Ersatzansprüche wegen Veränderung/Verschlechterung verjähren 6 Monate nach Rückgabe der Mietsache. ' +
           'Rechtzeitig sichern (z. B. Aufrechnung mit der Kaution erklären, ggf. Mahnbescheid).</p><dl class="kv"><dt>Auszug</dt><dd>' + fmtDatum(k.auszugAm) + '</dd><dt>Übergabe</dt><dd>' + fmtDatum(k.uebergabeAm) + '</dd>' +
           '<dt>seit Übergabe</dt><dd>' + v.seitUebergabe + ' Tage</dd><dt>Status</dt><dd>' + AMPEL[a] + '</dd></dl>'

@@ -167,6 +167,13 @@ C.snoozeWV(d, w.id, 3, '2026-09-28');
 eq(w.datum, '2026-10-08', 'snooze +3 ab WV-Datum');
 C.snoozeWV(d, w.id, 7, '2026-12-01');
 eq(w.datum, '2026-12-08', 'snooze überfällig: ab heute');
+eq([C.plusEinheit('2026-10-01', 2, 'werktage'), C.plusEinheit('2026-10-01', 2, 'wochen'), C.plusEinheit('2026-01-31', 1, 'monate'), C.plusEinheit('2026-10-01', 4)],
+  ['2026-10-05', '2026-10-15', '2026-02-28', '2026-10-05'], 'plusEinheit Werktage/Wochen/Monate/Tage');
+d = testData(); const w2 = C.createWV(d, 'opos', 'o1', '2026-10-01', 'y');
+C.snoozeWV(d, w2.id, 1, '2026-09-28', 'werktage'); eq(w2.datum, '2026-10-02', 'snooze +1 Werktag');
+C.snoozeWV(d, w2.id, 1, '2026-09-28'); eq(w2.datum, '2026-10-05', 'snooze +1 Tag → Sa 03.10. Feiertag → Mo');
+C.setWVDatum(d, w2.id, '2026-12-25'); eq(w2.datum, '2026-12-28', 'festes Datum → Werktag');
+eq(C.normalize({ settings: { ui: { wvButtons: [2, 5] } } }).settings.ui.tabs.length, 6, 'UI-Einstellungen mit Standard ergänzt');
 
 section('Vorlagen');
 const html = C.vorlageZuHTML('Hallo {{m.name}},\n\n{{postenTabelle}}\n\nSumme **{{s}}** <x>\nZeile {{fehlt}}', { m: { name: 'A & B' }, postenTabelle: '<table>\n<tr><td>1</td></tr></table>', s: '1,00 €' });

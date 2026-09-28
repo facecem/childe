@@ -1,12 +1,12 @@
 :root{
   --bg:#f3f5f8; --card:#fff; --ink:#1d2733; --muted:#6b7785; --line:#dde3ea; --line2:#eef1f5;
-  --pri:#1f5fa8; --pri-ink:#fff; --pri-soft:#e6eff9;
+  --pri:#1f5fa8; --pri-ink:#fff; --pri-soft:color-mix(in srgb,var(--pri) 12%,#fff);
   --rot:#c62828; --rot-soft:#fdecea; --gelb:#b26a00; --gelb-soft:#fff4dc; --gruen:#2e7d32; --gruen-soft:#e7f4e8; --blau-soft:#e6eff9;
   --opos:#1f5fa8; --ih:#8a4fbf; --kaution:#00897b;
   --r:8px; --sh:0 1px 2px rgba(20,30,50,.06),0 2px 8px rgba(20,30,50,.05);
 }
 *{box-sizing:border-box}
-html,body{margin:0;background:var(--bg);color:var(--ink);font:14.5px/1.45 Calibri,Carlito,'Segoe UI',Arial,sans-serif}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:var(--fs,14.5px)/1.45 Calibri,Carlito,'Segoe UI',Arial,sans-serif}
 button,input,select,textarea{font:inherit;color:inherit}
 a{color:var(--pri)}
 h2,h3{margin:0 0 .6em;font-weight:700} h2{font-size:1.25rem} h3{font-size:1.05rem}
@@ -14,7 +14,7 @@ h2,h3{margin:0 0 .6em;font-weight:700} h2{font-size:1.25rem} h3{font-size:1.05re
 .rot-t{color:var(--rot)} .gruen-t{color:var(--gruen)}
 
 /* Kopf + Navigation */
-.top{display:flex;align-items:center;gap:16px;padding:10px 20px;background:#15385f;color:#fff;position:sticky;top:0;z-index:20}
+.top{display:flex;align-items:center;gap:16px;padding:10px 20px;background:var(--kopf,#15385f);color:#fff;position:sticky;top:0;z-index:20}
 .brand{display:flex;flex-direction:column;line-height:1.15} .brand b{font-size:1.15rem} .brand span{font-size:.85rem;opacity:.75}
 .suche{margin-left:auto;position:relative;width:min(420px,50vw)}
 .suche input{width:100%;padding:7px 12px;border-radius:20px;border:0;background:rgba(255,255,255,.14);color:#fff}
@@ -52,7 +52,7 @@ kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;paddi
 /* Buttons & Formulare */
 button,.btn{border:1px solid var(--line);background:#fff;border-radius:6px;padding:6px 12px;cursor:pointer;line-height:1.3;display:inline-flex;align-items:center;gap:4px}
 button:hover,.btn:hover{border-color:#b7c3d1;background:#f8fafc} button:disabled{opacity:.45;cursor:not-allowed}
-button.primary{background:var(--pri);border-color:var(--pri);color:var(--pri-ink)} button.primary:hover{background:#184d8a}
+button.primary{background:var(--pri);border-color:var(--pri);color:var(--pri-ink)} button.primary:hover{filter:brightness(.9)}
 button.ghost{background:transparent} button.del{color:var(--rot)} button.ok{color:var(--gruen)}
 button.s{padding:2px 8px;font-size:.88em;margin-left:3px}
 input,select,textarea{border:1px solid #c9d2dc;border-radius:6px;padding:6px 8px;background:#fff;max-width:100%}
@@ -136,3 +136,10 @@ dialog.docdlg{width:min(1000px,97vw)} dialog.docdlg .mbody{padding:10px 14px}
 .toast.warn{background:#8a5300} .toast.err{background:var(--rot)} .toast.weg{opacity:0;transform:translateY(8px)}
 
 @media print{.top,#nav,#toasts{display:none} main{padding:0} .card{box-shadow:none;border:0}}
+
+/* Anpassbar */
+.wvbtns{display:inline-flex;gap:0;margin-right:4px} .wvbtns button.s{margin-left:-1px;border-radius:0} .wvbtns button.s:first-child{border-radius:5px 0 0 5px} .wvbtns button.s:last-child{border-radius:0 5px 5px 0}
+.wvbtns button.mehr{font-weight:700}
+.chips{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px} .chips button{margin:0}
+input[type=color]{height:34px;padding:2px;width:80px}
+body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body.kompakt .card{padding:10px 12px;margin-bottom:10px} body.kompakt main{padding-top:10px}

@@ -7,13 +7,13 @@
 <style>
 :root{
   --bg:#f3f5f8; --card:#fff; --ink:#1d2733; --muted:#6b7785; --line:#dde3ea; --line2:#eef1f5;
-  --pri:#1f5fa8; --pri-ink:#fff; --pri-soft:#e6eff9;
+  --pri:#1f5fa8; --pri-ink:#fff; --pri-soft:color-mix(in srgb,var(--pri) 12%,#fff);
   --rot:#c62828; --rot-soft:#fdecea; --gelb:#b26a00; --gelb-soft:#fff4dc; --gruen:#2e7d32; --gruen-soft:#e7f4e8; --blau-soft:#e6eff9;
   --opos:#1f5fa8; --ih:#8a4fbf; --kaution:#00897b;
   --r:8px; --sh:0 1px 2px rgba(20,30,50,.06),0 2px 8px rgba(20,30,50,.05);
 }
 *{box-sizing:border-box}
-html,body{margin:0;background:var(--bg);color:var(--ink);font:14.5px/1.45 Calibri,Carlito,'Segoe UI',Arial,sans-serif}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:var(--fs,14.5px)/1.45 Calibri,Carlito,'Segoe UI',Arial,sans-serif}
 button,input,select,textarea{font:inherit;color:inherit}
 a{color:var(--pri)}
 h2,h3{margin:0 0 .6em;font-weight:700} h2{font-size:1.25rem} h3{font-size:1.05rem}
@@ -21,7 +21,7 @@ h2,h3{margin:0 0 .6em;font-weight:700} h2{font-size:1.25rem} h3{font-size:1.05re
 .rot-t{color:var(--rot)} .gruen-t{color:var(--gruen)}
 
 /* Kopf + Navigation */
-.top{display:flex;align-items:center;gap:16px;padding:10px 20px;background:#15385f;color:#fff;position:sticky;top:0;z-index:20}
+.top{display:flex;align-items:center;gap:16px;padding:10px 20px;background:var(--kopf,#15385f);color:#fff;position:sticky;top:0;z-index:20}
 .brand{display:flex;flex-direction:column;line-height:1.15} .brand b{font-size:1.15rem} .brand span{font-size:.85rem;opacity:.75}
 .suche{margin-left:auto;position:relative;width:min(420px,50vw)}
 .suche input{width:100%;padding:7px 12px;border-radius:20px;border:0;background:rgba(255,255,255,.14);color:#fff}
@@ -59,7 +59,7 @@ kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;paddi
 /* Buttons & Formulare */
 button,.btn{border:1px solid var(--line);background:#fff;border-radius:6px;padding:6px 12px;cursor:pointer;line-height:1.3;display:inline-flex;align-items:center;gap:4px}
 button:hover,.btn:hover{border-color:#b7c3d1;background:#f8fafc} button:disabled{opacity:.45;cursor:not-allowed}
-button.primary{background:var(--pri);border-color:var(--pri);color:var(--pri-ink)} button.primary:hover{background:#184d8a}
+button.primary{background:var(--pri);border-color:var(--pri);color:var(--pri-ink)} button.primary:hover{filter:brightness(.9)}
 button.ghost{background:transparent} button.del{color:var(--rot)} button.ok{color:var(--gruen)}
 button.s{padding:2px 8px;font-size:.88em;margin-left:3px}
 input,select,textarea{border:1px solid #c9d2dc;border-radius:6px;padding:6px 8px;background:#fff;max-width:100%}
@@ -143,6 +143,13 @@ dialog.docdlg{width:min(1000px,97vw)} dialog.docdlg .mbody{padding:10px 14px}
 .toast.warn{background:#8a5300} .toast.err{background:var(--rot)} .toast.weg{opacity:0;transform:translateY(8px)}
 
 @media print{.top,#nav,#toasts{display:none} main{padding:0} .card{box-shadow:none;border:0}}
+
+/* Anpassbar */
+.wvbtns{display:inline-flex;gap:0;margin-right:4px} .wvbtns button.s{margin-left:-1px;border-radius:0} .wvbtns button.s:first-child{border-radius:5px 0 0 5px} .wvbtns button.s:last-child{border-radius:0 5px 5px 0}
+.wvbtns button.mehr{font-weight:700}
+.chips{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px} .chips button{margin:0}
+input[type=color]{height:34px;padding:2px;width:80px}
+body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body.kompakt .card{padding:10px 12px;margin-bottom:10px} body.kompakt main{padding-top:10px}
 
 </style>
 </head>
@@ -301,8 +308,30 @@ dialog.docdlg{width:min(1000px,97vw)} dialog.docdlg .mbody{padding:10px 14px}
         angebot: 5, ausfuehrung: 10, rechnung: 14, ihMieter: 14, weiterbelastung: 14,
         kautionAbrechnungMonate: 3, auszahlung: 14, bankverbindung: 14
       },
-      puffer: 3, mahngebuehr: 0, feiertageNRW: true, ratenVerzugTage: 14
+      puffer: 3, mahngebuehr: 0, feiertageNRW: true, ratenVerzugTage: 14,
+      ui: defaultUI()
     };
+  }
+  /** Anpassbare Oberfläche (Einstellungen → Anpassen) */
+  function defaultUI() {
+    return {
+      wvButtons: [1, 2, 3, 4], wvEinheit: 'tage', neuWvTage: 7,
+      wvAufgaben: ['Zahlungseingang prüfen', 'Rückruf Mieter', 'Rückmeldung Handwerker?', 'Mit Chef besprechen', 'Unterlagen angefordert – eingegangen?', 'Anwalt: Sachstand'],
+      startTab: 'dashboard', dashZeit: 'faellig', tabs: ['dashboard', 'opos', 'ih', 'kaution', 'stamm', 'kontakte'],
+      kacheln: ['ueber', 'heute', 'w7', 'opos', 'ih', 'kaution', 'rueck', 'verj'],
+      akzent: '#1f5fa8', kopf: '#15385f', schrift: 14.5, kompakt: false, verjaehrungWarnTage: 30,
+      gewerke: ['Sanitär', 'Heizung', 'Elektro', 'Dach', 'Maler', 'Schreiner/Tischler', 'Schlüsseldienst', 'Glaser', 'Rohrreinigung',
+        'Schädlingsbekämpfung', 'Fenster/Türen', 'Bodenleger', 'Garten', 'Reinigung', 'Aufzug', 'Sonstiges']
+    };
+  }
+  const WV_EINHEITEN = { tage: 'Tage', werktage: 'Werktage', wochen: 'Wochen', monate: 'Monate' };
+  /** Datum um n Einheiten verschieben */
+  function plusEinheit(iso, n, einheit = 'tage', nrw = true) {
+    n = Number(n) || 0;
+    if (einheit === 'werktage') return addWerktage(iso, n, nrw);
+    if (einheit === 'wochen') return addDays(iso, n * 7);
+    if (einheit === 'monate') return addMonths(iso, n);
+    return addDays(iso, n);
   }
   function emptyData() {
     return {
@@ -319,6 +348,7 @@ dialog.docdlg{width:min(1000px,97vw)} dialog.docdlg .mbody{padding:10px 14px}
     out.version = DATA_VERSION;
     out.settings = Object.assign(defaultSettings(), d.settings || {});
     out.settings.fristen = Object.assign(defaultSettings().fristen, (d.settings && d.settings.fristen) || {});
+    out.settings.ui = Object.assign(defaultUI(), (d.settings && d.settings.ui) || {});
     ARRAYS.forEach(k => { if (!Array.isArray(out[k])) out[k] = []; });
     out.vorlagen = d.vorlagen && typeof d.vorlagen === 'object' ? d.vorlagen : {};
     out.meta = Object.assign({ lastBackup: null, erstellt: today() }, d.meta || {});
@@ -474,11 +504,11 @@ dialog.docdlg{width:min(1000px,97vw)} dialog.docdlg .mbody{padding:10px 14px}
     const ende = addMonths(basis, 6);
     return { basis, ende, restTage: diffDays(heute, ende), seitUebergabe: diffDays(basis, heute) };
   }
-  function kautionAmpel(k, heute = today()) {
+  function kautionAmpel(k, heute = today(), warnTage = 30) {
     if (k.status === 'ausgezahlt') return 'grau';
     const v = verjaehrung(k, heute);
     if (!v) return 'grau';
-    if (v.restTage < 30) return 'rot';
+    if (v.restTage < warnTage) return 'rot';
     if (v.seitUebergabe > 90) return 'gelb';
     return 'gruen';
   }
@@ -507,10 +537,12 @@ dialog.docdlg{width:min(1000px,97vw)} dialog.docdlg .mbody{padding:10px 14px}
     const w = data.wv.find(x => x.id === id); if (!w) return null;
     w.status = 'erledigt'; w.erledigtAm = am; return w;
   }
-  function snoozeWV(data, id, tage, heute = today()) {
+  /** WV verschieben: ab WV-Datum (bzw. heute, falls überfällig) um n Tage/Werktage/Wochen/Monate */
+  function snoozeWV(data, id, n, heute = today(), einheit = 'tage') {
     const w = data.wv.find(x => x.id === id); if (!w) return null;
-    w.datum = wvDatum(data, addDays(maxISO(w.datum, heute), tage)); return w;
+    w.datum = wvDatum(data, plusEinheit(maxISO(w.datum, heute), n, einheit, data.settings.feiertageNRW !== false)); return w;
   }
+  function setWVDatum(data, id, iso) { const w = data.wv.find(x => x.id === id); if (!w) return null; w.datum = wvDatum(data, iso); return w; }
   /** Offene Auto-WV eines Falls schließen. regeln: true = alle, Array = nur diese Regeln */
   function closeWV(data, bereich, refId, regeln = true, am = today()) {
     let n = 0;
@@ -997,7 +1029,7 @@ dialog.docdlg{width:min(1000px,97vw)} dialog.docdlg .mbody{padding:10px 14px}
     mieterName, briefanrede,
     defaultSettings, emptyData, normalize, migratePrototype, stufeAusText,
     offenSumme, kuendigungsCheck, verteileZahlung, kautionsabrechnung, verjaehrung, kautionAmpel, ratenplan,
-    wvDatum, createWV, completeWV, snoozeWV, closeWV, offeneWV, addVerlauf, wvRegeln, applyAction, findFall,
+    wvDatum, createWV, completeWV, snoozeWV, setWVDatum, plusEinheit, WV_EINHEITEN, defaultUI, closeWV, offeneWV, addVerlauf, wvRegeln, applyAction, findFall,
     getPath, vorlageZuHTML, vorlageZuText,
     parseCSV, guessMapping, typAusText, importOPOS, normName, nameAufteilen, parseMietzeit, parseSaldo, parseWV, erkenneFormat, titelMieter, parseJsonBlatt, parseSaldenBlatt, findeMieter, saldoAbgleich, importSalden, asciiDateiname, buildEML
   };
@@ -1646,9 +1678,9 @@ Mit freundlichen Grüßen
     ['dashboard', 'Dashboard'], ['opos', 'OPOS'], ['ih', 'Instandhaltung'], ['kaution', 'Kaution'],
     ['stamm', 'Objekte & Mieter'], ['kontakte', 'Kontakte'], ['einst', 'Einstellungen']
   ];
-  const GEWERKE = ['Sanitär', 'Heizung', 'Elektro', 'Dach', 'Maler', 'Schreiner/Tischler', 'Schlüsseldienst', 'Glaser', 'Rohrreinigung',
-    'Schädlingsbekämpfung', 'Fenster/Türen', 'Bodenleger', 'Garten', 'Reinigung', 'Aufzug', 'Sonstiges'];
-  App.GEWERKE = GEWERKE;
+  const UI = () => App.data.settings.ui;
+  App.ui = UI;
+  Object.defineProperty(App, 'GEWERKE', { get: () => UI().gewerke });
 
   /* ---------- Speicher ---------- */
   App.load = function () {
@@ -1794,6 +1826,12 @@ Mit freundlichen Grüßen
   };
 
   /* ---------- WV-Tabelle (Dashboard + Fälle) ---------- */
+  const EINHEIT_KURZ = { tage: '', werktage: ' WT', wochen: ' Wo', monate: ' Mo' };
+  function snoozeButtons(id) {
+    const u = UI();
+    return (u.wvButtons || []).map(n => '<button class="s" data-act="wvSnooze" data-id="' + id + '" data-t="' + n + '" title="+' + n + ' ' + C.WV_EINHEITEN[u.wvEinheit] + '">+' + n + EINHEIT_KURZ[u.wvEinheit] + '</button>').join('');
+  }
+  function aufgabenListe() { return '<datalist id="dl_wvAufgaben">' + (UI().wvAufgaben || []).map(a => '<option value="' + esc(a) + '">').join('') + '</datalist>'; }
   App.wvTabelle = function (list, o = {}) {
     if (!list.length) return H.leer(o.leer || 'Keine Wiedervorlagen.');
     const t = C.today();
@@ -1805,7 +1843,7 @@ Mit freundlichen Grüßen
         (o.fall !== false ? '<td>' + H.chip(C.BEREICHE[w.bereich], 'b-' + w.bereich) + '</td><td><a href="#" data-act="openFall" data-b="' + w.bereich + '" data-id="' + w.refId + '">' + esc(H.fallLabel(w.bereich, f)) + '</a></td>' : '') +
         '<td>' + esc(w.aufgabe) + '</td><td class="muted" title="' + (w.erstelltDurch === 'auto' ? 'automatisch erzeugt' : 'manuell') + '">' + (w.erstelltDurch === 'auto' ? '⚙' : '✎') + '</td>' +
         '<td class="r nw">' + (w.status === 'offen'
-          ? '<button class="s" data-act="wvSnooze" data-id="' + w.id + '" data-t="3">+3</button><button class="s" data-act="wvSnooze" data-id="' + w.id + '" data-t="7">+7</button><button class="s" data-act="wvSnooze" data-id="' + w.id + '" data-t="14">+14</button>' +
+          ? '<span class="wvbtns">' + snoozeButtons(w.id) + '<button class="s mehr" data-act="wvSnoozeFrei" data-id="' + w.id + '" title="andere Anzahl oder festes Datum">+…</button></span>' +
             '<button class="s ok" data-act="wvDone" data-id="' + w.id + '" title="erledigt">✓</button><button class="s ok" data-act="wvDoneNeu" data-id="' + w.id + '" title="erledigt + neue WV">✓+</button>'
           : '<small class="muted">erledigt ' + fmtDatum(w.erledigtAm) + '</small> <button class="s" data-act="wvReopen" data-id="' + w.id + '" title="wieder öffnen">↺</button>') +
         '</td></tr>';
@@ -1821,14 +1859,35 @@ Mit freundlichen Grüßen
     openFall(ds) { App.tab = ds.b; App.detail = ds.id; App.render(); window.scrollTo(0, 0); },
     back() { App.detail = null; App.render(); },
     tab(ds) { App.tab = ds.tab; App.detail = null; App.render(); window.scrollTo(0, 0); },
-    wvSnooze(ds) { C.snoozeWV(App.data, ds.id, +ds.t); App.commit(); toast('WV verschoben.'); },
+    wvSnooze(ds) { const w = C.snoozeWV(App.data, ds.id, +ds.t, C.today(), UI().wvEinheit); App.commit(); toast('WV verschoben auf ' + fmtDatum(w.datum) + '.'); },
+    async wvSnoozeFrei(ds) {
+      const w = App.data.wv.find(x => x.id === ds.id); if (!w) return;
+      const letzte = App.f.snooze || { anzahl: 5, einheit: UI().wvEinheit };
+      const basis = C.maxISO(w.datum, C.today());
+      const chips = [1, 2, 3, 4, 5, 7, 10, 14, 21, 30].map(n => '<button type="button" class="s" data-n="' + n + '">+' + n + '</button>').join('');
+      const v = await formModal('WV verschieben', [
+        { k: 'html', t: 'html', html: '<p class="muted">Aktuell: <b>' + fmtDatum(w.datum) + '</b> – ' + esc(w.aufgabe) + '</p><div class="chips">' + chips + '</div>' },
+        { k: 'anzahl', l: 'um', t: 'number', min: 1, req: true }, { k: 'einheit', l: 'Einheit', t: 'select', o: Object.entries(C.WV_EINHEITEN) },
+        { k: 'datum', l: 'oder festes Datum', t: 'date', hint: 'überschreibt „um …“' },
+        { k: 'html2', t: 'html', html: '<p class="small">Neues Datum: <b id="snzVorschau"></b> <span class="muted">(Wochenende/Feiertag → nächster Werktag)</span></p>' }
+      ], letzte, { ok: 'Verschieben', onOpen(d) {
+        const f = d.querySelector('form'); const out = d.querySelector('#snzVorschau');
+        const upd = () => { const x = collect(f); const iso = x.datum || C.plusEinheit(basis, x.anzahl, x.einheit); out.textContent = x.datum || x.anzahl ? fmtDatum(C.wvDatum(App.data, iso)) : '–'; };
+        d.querySelectorAll('[data-n]').forEach(b => { b.onclick = () => { f.anzahl.value = b.dataset.n; f.datum.value = ''; upd(); }; });
+        f.addEventListener('input', upd); f.addEventListener('change', upd); upd();
+      } });
+      if (!v) return;
+      App.f.snooze = { anzahl: v.anzahl, einheit: v.einheit };
+      const n = v.datum ? C.setWVDatum(App.data, w.id, v.datum) : C.snoozeWV(App.data, w.id, v.anzahl, C.today(), v.einheit);
+      App.commit(); toast('WV verschoben auf ' + fmtDatum(n.datum) + '.');
+    },
     wvDone(ds) { C.completeWV(App.data, ds.id); App.commit(); },
     wvReopen(ds) { const w = App.data.wv.find(x => x.id === ds.id); if (w) { w.status = 'offen'; delete w.erledigtAm; App.commit(); } },
     async wvDoneNeu(ds) {
       const w = App.data.wv.find(x => x.id === ds.id); if (!w) return;
       const v = await formModal('Erledigt + neue WV', [
-        { k: 'datum', l: 'Neue WV am', t: 'date', req: true, d: C.addDays(C.today(), 7) },
-        { k: 'aufgabe', l: 'Aufgabe', req: true, full: true, d: w.aufgabe }], {}, { ok: 'Anlegen' });
+        { k: 'datum', l: 'Neue WV am', t: 'date', req: true, d: C.addDays(C.today(), UI().neuWvTage) },
+        { k: 'aufgabe', l: 'Aufgabe', req: true, full: true, d: w.aufgabe, list: 'dl_wvAufgaben' }], {}, { ok: 'Anlegen', outro: aufgabenListe() });
       if (!v) return;
       C.completeWV(App.data, w.id);
       const n = C.createWV(App.data, w.bereich, w.refId, v.datum, v.aufgabe, { erstelltDurch: 'manuell' });
@@ -1845,8 +1904,8 @@ Mit freundlichen Grüßen
         if (!v0) return; [b, id] = v0.fall.split('|');
       }
       const v = await formModal('Neue Wiedervorlage', [
-        { k: 'datum', l: 'Datum', t: 'date', req: true, d: C.addDays(C.today(), 7) },
-        { k: 'aufgabe', l: 'Aufgabe', req: true, full: true }]);
+        { k: 'datum', l: 'Datum', t: 'date', req: true, d: C.addDays(C.today(), UI().neuWvTage) },
+        { k: 'aufgabe', l: 'Aufgabe', req: true, full: true, list: 'dl_wvAufgaben', ph: 'Vorschlag wählen oder frei eingeben' }], {}, { outro: aufgabenListe() });
       if (!v) return;
       const n = C.createWV(App.data, b, id, v.datum, v.aufgabe, { erstelltDurch: 'manuell' });
       App.commit(); toast('WV angelegt für ' + fmtDatum(n.datum) + '.');
@@ -1928,7 +1987,9 @@ Mit freundlichen Grüßen
       const inObj = w => !f.objekt || (H.objektVonFall(w.bereich, H.fall(w.bereich, w.refId)) || {}).id === f.objekt;
       const cnt = { ueber: offen.filter(w => w.datum < t).length, heute: offen.filter(w => w.datum === t).length, w7: offen.filter(w => w.datum > t && w.datum <= C.addDays(t, 7)).length };
       const rueck = C.sum(d.opos.filter(x => x.stufe !== 'erledigt'), x => C.offenSumme(x.posten));
-      const kVerj = d.kaution.filter(k => k.status !== 'ausgezahlt' && (C.verjaehrung(k) || { restTage: 999 }).restTage < 30);
+      const vt = Number(UI().verjaehrungWarnTage) || 30;
+      const kVerj = d.kaution.filter(k => k.status !== 'ausgezahlt' && (C.verjaehrung(k) || { restTage: 9999 }).restTage < vt);
+      const zeig = UI().kacheln || [];
       let list = offen;
       if (f.zeit === 'ueber') list = list.filter(w => w.datum < t);
       else if (f.zeit === 'heute') list = list.filter(w => w.datum === t);
@@ -1944,14 +2005,15 @@ Mit freundlichen Grüßen
       return (backupAlt && (d.opos.length + d.ih.length + d.kaution.length) ? '<div class="banner warn">💾 ' + (lb ? 'Letztes Backup am ' + fmtDatum(lb) + '.' : 'Noch kein Backup erstellt.') +
         ' Die Daten liegen nur in diesem Browser – bitte wöchentlich sichern. <button data-act="backupExport">Jetzt Backup speichern</button></div>' : '') +
         '<div class="kacheln">' +
-        kachel(cnt.ueber, 'überfällig', cnt.ueber ? 'rot' : '', 'data-act="dashZeit" data-z="ueber"') +
-        kachel(cnt.heute, 'heute fällig', cnt.heute ? 'gelb' : '', 'data-act="dashZeit" data-z="heute"') +
-        kachel(cnt.w7, 'in 7 Tagen', '', 'data-act="dashZeit" data-z="7"') +
-        kachel(offen.filter(w => w.bereich === 'opos').length, 'WV OPOS', 'b-opos', 'data-act="dashBereich" data-b="opos"') +
-        kachel(offen.filter(w => w.bereich === 'ih').length, 'WV Instandhaltung', 'b-ih', 'data-act="dashBereich" data-b="ih"') +
-        kachel(offen.filter(w => w.bereich === 'kaution').length, 'WV Kaution', 'b-kaution', 'data-act="dashBereich" data-b="kaution"') +
-        kachel(fmtEUR(rueck), 'Rückstand gesamt', rueck ? 'rot-t' : '', 'data-act="tab" data-tab="opos"') +
-        kachel(kVerj.length, 'Kautionen: Verjährung < 30 T', kVerj.length ? 'rot' : '', 'data-act="tab" data-tab="kaution"') +
+        [['ueber', () => kachel(cnt.ueber, 'überfällig', cnt.ueber ? 'rot' : '', 'data-act="dashZeit" data-z="ueber"')],
+         ['heute', () => kachel(cnt.heute, 'heute fällig', cnt.heute ? 'gelb' : '', 'data-act="dashZeit" data-z="heute"')],
+         ['w7', () => kachel(cnt.w7, 'in 7 Tagen', '', 'data-act="dashZeit" data-z="7"')],
+         ['opos', () => kachel(offen.filter(w => w.bereich === 'opos').length, 'WV OPOS', 'b-opos', 'data-act="dashBereich" data-b="opos"')],
+         ['ih', () => kachel(offen.filter(w => w.bereich === 'ih').length, 'WV Instandhaltung', 'b-ih', 'data-act="dashBereich" data-b="ih"')],
+         ['kaution', () => kachel(offen.filter(w => w.bereich === 'kaution').length, 'WV Kaution', 'b-kaution', 'data-act="dashBereich" data-b="kaution"')],
+         ['rueck', () => kachel(fmtEUR(rueck), 'Rückstand gesamt', rueck ? 'rot-t' : '', 'data-act="tab" data-tab="opos"')],
+         ['verj', () => kachel(kVerj.length, 'Kautionen: Verjährung < ' + vt + ' T', kVerj.length ? 'rot' : '', 'data-act="tab" data-tab="kaution"')]]
+          .filter(([k]) => zeig.includes(k)).map(([, f2]) => f2()).join('') +
         '</div>' +
         '<section class="card"><div class="toolbar"><h2>Wiedervorlagen</h2>' +
         '<select data-filter="dash.zeit">' + [['faellig', 'fällig (bis heute)'], ['ueber', 'überfällig'], ['heute', 'heute'], ['7', 'nächste 7 Tage'], ['30', 'nächste 30 Tage'], ['alle', 'alle offenen'], ['erledigt', 'erledigte']]
@@ -2083,7 +2145,7 @@ Mit freundlichen Grüßen
       const k = ds.id ? H.kontakt(ds.id) : null;
       const v = await formModal(k ? 'Kontakt bearbeiten' : 'Neuer Kontakt', [
         { k: 'typ', l: 'Typ', t: 'select', o: Object.entries(KTYP), d: ds.typ || 'handwerker' }, { k: 'firma', l: 'Firma / Name', req: true },
-        { k: 'gewerk', l: 'Gewerke', t: 'multi', o: GEWERKE.map(g => [g, g]) },
+        { k: 'gewerk', l: 'Gewerke', t: 'multi', o: App.GEWERKE.map(g => [g, g]) },
         { k: 'ansprechpartner', l: 'Ansprechpartner' }, { k: 'tel', l: 'Telefon', t: 'tel' }, { k: 'email', l: 'E-Mail', t: 'email' },
         { k: 'anschrift', l: 'Anschrift', t: 'textarea', rows: 2 }, { k: 'notiz', l: 'Notiz', t: 'textarea', rows: 2 }
       ], k || {}, { wide: true });
@@ -2103,6 +2165,30 @@ Mit freundlichen Grüßen
     ihMieter: 'IH: Frist Anfrage an Handwerker (Tage)', weiterbelastung: 'IH: Zahlungsfrist Weiterbelastung (Tage)',
     kautionAbrechnungMonate: 'Kaution: Abrechnung nach Übergabe (Monate)', auszahlung: 'Kaution: Auszahlung prüfen nach (Tagen)', bankverbindung: 'Kaution: Frist Bankverbindung (Tage)'
   };
+
+  const KACHELN = [['ueber', 'überfällig'], ['heute', 'heute fällig'], ['w7', 'in 7 Tagen'], ['opos', 'WV OPOS'], ['ih', 'WV Instandhaltung'], ['kaution', 'WV Kaution'], ['rueck', 'Rückstand gesamt'], ['verj', 'Kautionen mit naher Verjährung']];
+  const DASH_ZEIT = [['faellig', 'fällig (bis heute)'], ['ueber', 'überfällig'], ['heute', 'heute'], ['7', 'nächste 7 Tage'], ['30', 'nächste 30 Tage'], ['alle', 'alle offenen']];
+  function anpassenHTML() {
+    const u = UI();
+    const felder = [
+      { k: 'wvButtons', l: 'Schnell-Buttons zum Verschieben', ph: '1, 2, 3, 4', hint: 'Zahlen mit Komma getrennt, z. B. „1, 2, 3, 4, 7, 14“. Daneben gibt es immer „+…“ für eine freie Anzahl oder ein Datum.' },
+      { k: 'wvEinheit', l: 'Schnell-Buttons zählen in', t: 'select', o: Object.entries(C.WV_EINHEITEN) },
+      { k: 'neuWvTage', l: 'Neue WV: Vorschlag in … Tagen', t: 'number', min: 0 },
+      { k: 'verjaehrungWarnTage', l: 'Kaution: Warnung … Tage vor Verjährung', t: 'number', min: 1 },
+      { k: 'wvAufgaben', l: 'Vorschläge für WV-Aufgaben (eine je Zeile)', t: 'textarea', rows: 5 },
+      { k: 'gewerke', l: 'Gewerke (eine je Zeile)', t: 'textarea', rows: 5 },
+      { k: 'startTab', l: 'Beim Öffnen anzeigen', t: 'select', o: TABS.filter(([k]) => k !== 'einst') },
+      { k: 'dashZeit', l: 'Dashboard: WV-Filter beim Öffnen', t: 'select', o: DASH_ZEIT },
+      { k: 'tabs', l: 'Sichtbare Bereiche', t: 'multi', o: TABS.filter(([k]) => k !== 'einst').map(([k, l]) => [k, esc(l)]) },
+      { k: 'kacheln', l: 'Kacheln im Dashboard', t: 'multi', o: KACHELN },
+      { k: 'akzent', l: 'Akzentfarbe', t: 'color' }, { k: 'kopf', l: 'Farbe Kopfleiste', t: 'color' },
+      { k: 'schrift', l: 'Schriftgröße (px)', t: 'number', min: 11, max: 20, step: '0.5' },
+      { k: 'kompakt', l: 'Kompakte Tabellen (mehr Zeilen auf dem Bildschirm)', t: 'checkbox', full: true }
+    ];
+    const vals = Object.assign({}, u, { wvButtons: (u.wvButtons || []).join(', '), wvAufgaben: (u.wvAufgaben || []).join('\n'), gewerke: (u.gewerke || []).join('\n') });
+    return '<section class="card"><h2>Anpassen</h2><form id="setUI"><div class="grid">' + felder.map(x => feld(x, vals[x.k])).join('') + '</div>' +
+      '<div class="actions"><button type="button" class="del" data-act="uiReset">Auf Standard zurücksetzen</button><button type="button" class="primary" data-act="uiSave">Speichern</button></div></form></section>';
+  }
   App.views.einst = {
     render() {
       const s = App.data.settings, f = App.f.einst;
@@ -2130,6 +2216,7 @@ Mit freundlichen Grüßen
         '<div class="actions"><button type="button" class="primary" data-act="settingsSave" data-form="setFirma">Speichern</button></div></form></section>' +
         '<section class="card"><h2>Fristen & Regeln</h2><form id="setRegeln"><div class="grid">' + regelFelder.map(x => feld(x, vals[x.k.startsWith('fr_') ? x.k : x.k])).join('') + '</div>' +
         '<div class="actions"><button type="button" class="primary" data-act="settingsSave" data-form="setRegeln">Speichern</button></div></form></section></div>' +
+        anpassenHTML() +
         '<section class="card"><div class="toolbar"><h2>Vorlagen (Textbausteine)</h2><select data-change="vorlageWahl">' + vorlagenOpt + '</select>' +
         (v.geaendert ? H.chip('angepasst', 'gelb') : H.chip('Standard')) + '</div>' +
         '<div class="vorlagen"><div><form id="vorlForm"><label class="fld full"><span>Betreff</span><input name="betreff" value="' + esc(v.betreff) + '"></label>' +
@@ -2151,6 +2238,22 @@ Mit freundlichen Grüßen
     }
   };
   Object.assign(App.act, {
+    uiSave() {
+      const v = collect($('#setUI')); const u = UI();
+      const zeilen = t => String(t || '').split('\n').map(x => x.trim()).filter(Boolean);
+      const btn = String(v.wvButtons).split(/[,;\s]+/).map(Number).filter(n => n > 0 && n < 1000);
+      Object.assign(u, v, {
+        wvButtons: Array.from(new Set(btn)).slice(0, 12), wvAufgaben: zeilen(v.wvAufgaben), gewerke: zeilen(v.gewerke),
+        neuWvTage: Number(v.neuWvTage) || 0, verjaehrungWarnTage: Number(v.verjaehrungWarnTage) || 30, schrift: Math.min(20, Math.max(11, Number(v.schrift) || 14.5))
+      });
+      if (!u.tabs.length) u.tabs = ['dashboard'];
+      if (!u.tabs.includes(u.startTab)) u.startTab = u.tabs[0];
+      App.commit(); toast('Anpassungen gespeichert.');
+    },
+    async uiReset() {
+      if (!await confirmDlg('Alle Anpassungen (Buttons, Farben, Listen, Ansicht) auf Standard zurücksetzen?')) return;
+      App.data.settings.ui = C.defaultUI(); App.commit();
+    },
     settingsSave(ds) {
       const v = collect($('#' + ds.form)); const s = App.data.settings;
       Object.keys(v).forEach(k => { if (k.startsWith('fr_')) s.fristen[k.slice(3)] = Number(v[k]) || 0; else s[k] = v[k]; });
@@ -2261,10 +2364,19 @@ Mit freundlichen Grüßen
   }
 
   /* ---------- Rendern ---------- */
+  function sichtbareTabs() { const t = UI().tabs || []; return TABS.filter(([k]) => k === 'einst' || t.includes(k)); }
+  function applyTheme() {
+    const u = UI(), r = document.documentElement.style;
+    r.setProperty('--pri', u.akzent || '#1f5fa8'); r.setProperty('--kopf', u.kopf || '#15385f');
+    r.setProperty('--fs', (Number(u.schrift) || 14.5) + 'px');
+    document.body.classList.toggle('kompakt', !!u.kompakt);
+  }
   App.render = function () {
     const nav = $('#nav'); const t = C.today();
     const ueber = App.data.wv.filter(w => w.status === 'offen' && w.datum <= t);
-    nav.innerHTML = TABS.map(([k, l], i) => {
+    applyTheme();
+    if (!sichtbareTabs().some(([k]) => k === App.tab)) { App.tab = sichtbareTabs()[0][0]; App.detail = null; }
+    nav.innerHTML = sichtbareTabs().map(([k, l], i) => {
       const n = ['opos', 'ih', 'kaution'].includes(k) ? ueber.filter(w => w.bereich === k).length : k === 'dashboard' ? ueber.length : 0;
       return '<button class="' + (App.tab === k ? 'on' : '') + '" data-act="tab" data-tab="' + k + '" title="Alt+' + (i + 1) + '">' + l + (n ? '<span class="badge">' + n + '</span>' : '') + '</button>';
     }).join('');
@@ -2282,6 +2394,7 @@ Mit freundlichen Grüßen
   let _filterTimer;
   function init() {
     App.load();
+    App.tab = UI().startTab || 'dashboard'; App.f.dash.zeit = UI().dashZeit || 'faellig';
     document.addEventListener('click', e => {
       const sb = e.target.closest('#sucheErg button'); if (sb) { e.preventDefault(); return sucheOeffnen(_treffer[+sb.dataset.i].act); }
       if (!e.target.closest('.suche')) $('#sucheErg').hidden = true;
@@ -2307,7 +2420,7 @@ Mit freundlichen Grüßen
     document.addEventListener('keydown', e => {
       if ($('#dlg').open) return;
       const inFeld = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) || document.activeElement.isContentEditable;
-      if (e.altKey && /^[1-7]$/.test(e.key)) { e.preventDefault(); App.act.tab({ tab: TABS[+e.key - 1][0] }); }
+      if (e.altKey && /^[1-7]$/.test(e.key)) { const t = sichtbareTabs()[+e.key - 1]; if (t) { e.preventDefault(); App.act.tab({ tab: t[0] }); } }
       else if ((e.ctrlKey && e.key.toLowerCase() === 'k') || (e.key === '/' && !inFeld)) { e.preventDefault(); $('#suche').focus(); $('#suche').select(); }
       else if (e.key === 'Escape' && App.detail && !inFeld) App.act.back();
       else if (e.altKey && e.key.toLowerCase() === 'n') {
@@ -2982,9 +3095,10 @@ Mit freundlichen Grüßen
   const { esc, fmtEUR, fmtDatum } = C;
   const KS = C.K_STATUS;
   const ART = { konto: 'Kautionskonto', bar: 'Barkaution', buergschaft: 'Bürgschaft' };
-  const AMPEL = { rot: 'Verjährung < 30 Tage!', gelb: 'Abrechnung überfällig (> 3 Monate)', gruen: 'im Zeitplan', grau: '–' };
+  const AMPEL = { rot: 'Verjährung bald!', gelb: 'Abrechnung überfällig (> 3 Monate)', gruen: 'im Zeitplan', grau: '–' };
 
-  function ampelDot(k) { const a = C.kautionAmpel(k); return '<span class="dot ' + a + '" title="' + AMPEL[a] + '"></span>'; }
+  const warn = () => Number(App.ui().verjaehrungWarnTage) || 30;
+  function ampelDot(k) { const a = C.kautionAmpel(k, C.today(), warn()); return '<span class="dot ' + a + '" title="' + AMPEL[a] + '"></span>'; }
 
   App.views.kaution = {
     render() {
@@ -3001,14 +3115,14 @@ Mit freundlichen Grüßen
             const m = H.mieter(k.mieterId) || {}; const o = H.objekt(m.objektId) || {}; const v = C.verjaehrung(k); const r = C.kautionsabrechnung(k);
             return '<tr class="klick" data-act="openFall" data-b="kaution" data-id="' + k.id + '"><td>' + ampelDot(k) + '</td><td><b>' + esc(C.mieterName(m)) + '</b></td><td>' + esc(o.bezeichnung || '–') + (m.whg ? ' · ' + esc(m.whg) : '') + '</td>' +
               '<td class="r">' + fmtEUR(k.betrag) + '</td><td>' + ART[k.art] + '</td><td>' + fmtDatum(k.auszugAm) + '</td><td>' + fmtDatum(k.uebergabeAm) + '</td>' +
-              '<td>' + (v ? fmtDatum(v.ende) + ' <small class="' + (v.restTage < 30 ? 'rot-t' : 'muted') + '">(' + (v.restTage >= 0 ? 'noch ' + v.restTage + ' T' : 'abgelaufen') + ')</small>' : '–') + '</td>' +
+              '<td>' + (v ? fmtDatum(v.ende) + ' <small class="' + (v.restTage < warn() ? 'rot-t' : 'muted') + '">(' + (v.restTage >= 0 ? 'noch ' + v.restTage + ' T' : 'abgelaufen') + ')</small>' : '–') + '</td>' +
               '<td>' + H.chip(KS[k.status], 'ks-' + k.status) + '</td><td class="r">' + (k.auszugAm ? fmtEUR(r.auszahlung) : '') + '</td><td>' + H.wvChip(H.naechsteWV('kaution', k.id)) + '</td></tr>';
           }).join('') + '</tbody></table>' : H.leer('Keine Kautionsfälle.')) + '</section>';
     },
     detail(id) {
       const k = H.fall('kaution', id); if (!k) { App.detail = null; return App.views.kaution.render(); }
       const m = H.mieter(k.mieterId) || {}; const o = H.objekt(m.objektId) || {};
-      const v = C.verjaehrung(k); const r = C.kautionsabrechnung(k); const a = C.kautionAmpel(k);
+      const v = C.verjaehrung(k); const r = C.kautionsabrechnung(k); const a = C.kautionAmpel(k, C.today(), warn());
       const b = (act, label, cls = '') => '<button class="' + cls + '" data-act="' + act + '" data-id="' + id + '">' + label + '</button>';
       const next = !k.auszugAm ? 'kautionAuszug' : k.status === 'in_pruefung' ? 'kautionAbrechnung' : k.status === 'abgerechnet' ? 'kautionAusgezahlt' : '';
       const c = x => (x === next ? 'primary' : '');
@@ -3016,7 +3130,7 @@ Mit freundlichen Grüßen
         '<span class="muted">' + esc(o.bezeichnung || '') + (m.whg ? ' · ' + esc(m.whg) : '') + '</span><span class="sp"></span>' +
         '<button class="s" data-act="kautionEdit" data-id="' + id + '">Bearbeiten</button><button class="s del" data-act="kautionDel" data-id="' + id + '">Löschen</button></div>' +
         '<div class="cols3"><section class="card ampel-' + a + '"><h3>Fristen</h3>' +
-        (v ? '<div class="big ' + (v.restTage < 30 ? 'rot-t' : '') + '">' + (v.restTage >= 0 ? 'noch ' + v.restTage + ' Tage' : 'seit ' + (-v.restTage) + ' Tagen abgelaufen') + '</div>' +
+        (v ? '<div class="big ' + (v.restTage < warn() ? 'rot-t' : '') + '">' + (v.restTage >= 0 ? 'noch ' + v.restTage + ' Tage' : 'seit ' + (-v.restTage) + ' Tagen abgelaufen') + '</div>' +
           '<div>bis zur <b>Verjährung § 548 BGB</b> am <b>' + fmtDatum(v.ende) + '</b></div><p class="small muted">Ersatzansprüche wegen Veränderung/Verschlechterung verjähren 6 Monate nach Rückgabe der Mietsache. ' +
           'Rechtzeitig sichern (z. B. Aufrechnung mit der Kaution erklären, ggf. Mahnbescheid).</p><dl class="kv"><dt>Auszug</dt><dd>' + fmtDatum(k.auszugAm) + '</dd><dt>Übergabe</dt><dd>' + fmtDatum(k.uebergabeAm) + '</dd>' +
           '<dt>seit Übergabe</dt><dd>' + v.seitUebergabe + ' Tage</dd><dt>Status</dt><dd>' + AMPEL[a] + '</dd></dl>'

@@ -141,8 +141,30 @@
         angebot: 5, ausfuehrung: 10, rechnung: 14, ihMieter: 14, weiterbelastung: 14,
         kautionAbrechnungMonate: 3, auszahlung: 14, bankverbindung: 14
       },
-      puffer: 3, mahngebuehr: 0, feiertageNRW: true, ratenVerzugTage: 14
+      puffer: 3, mahngebuehr: 0, feiertageNRW: true, ratenVerzugTage: 14,
+      ui: defaultUI()
     };
+  }
+  /** Anpassbare Oberfläche (Einstellungen → Anpassen) */
+  function defaultUI() {
+    return {
+      wvButtons: [1, 2, 3, 4], wvEinheit: 'tage', neuWvTage: 7,
+      wvAufgaben: ['Zahlungseingang prüfen', 'Rückruf Mieter', 'Rückmeldung Handwerker?', 'Mit Chef besprechen', 'Unterlagen angefordert – eingegangen?', 'Anwalt: Sachstand'],
+      startTab: 'dashboard', dashZeit: 'faellig', tabs: ['dashboard', 'opos', 'ih', 'kaution', 'stamm', 'kontakte'],
+      kacheln: ['ueber', 'heute', 'w7', 'opos', 'ih', 'kaution', 'rueck', 'verj'],
+      akzent: '#1f5fa8', kopf: '#15385f', schrift: 14.5, kompakt: false, verjaehrungWarnTage: 30,
+      gewerke: ['Sanitär', 'Heizung', 'Elektro', 'Dach', 'Maler', 'Schreiner/Tischler', 'Schlüsseldienst', 'Glaser', 'Rohrreinigung',
+        'Schädlingsbekämpfung', 'Fenster/Türen', 'Bodenleger', 'Garten', 'Reinigung', 'Aufzug', 'Sonstiges']
+    };
+  }
+  const WV_EINHEITEN = { tage: 'Tage', werktage: 'Werktage', wochen: 'Wochen', monate: 'Monate' };
+  /** Datum um n Einheiten verschieben */
+  function plusEinheit(iso, n, einheit = 'tage', nrw = true) {
+    n = Number(n) || 0;
+    if (einheit === 'werktage') return addWerktage(iso, n, nrw);
+    if (einheit === 'wochen') return addDays(iso, n * 7);
+    if (einheit === 'monate') return addMonths(iso, n);
+    return addDays(iso, n);
   }
   function emptyData() {
     return {
@@ -159,6 +181,7 @@
     out.version = DATA_VERSION;
     out.settings = Object.assign(defaultSettings(), d.settings || {});
     out.settings.fristen = Object.assign(defaultSettings().fristen, (d.settings && d.settings.fristen) || {});
+    out.settings.ui = Object.assign(defaultUI(), (d.settings && d.settings.ui) || {});
     ARRAYS.forEach(k => { if (!Array.isArray(out[k])) out[k] = []; });
     out.vorlagen = d.vorlagen && typeof d.vorlagen === 'object' ? d.vorlagen : {};
     out.meta = Object.assign({ lastBackup: null, erstellt: today() }, d.meta || {});
@@ -314,11 +337,11 @@
     const ende = addMonths(basis, 6);
     return { basis, ende, restTage: diffDays(heute, ende), seitUebergabe: diffDays(basis, heute) };
   }
-  function kautionAmpel(k, heute = today()) {
+  function kautionAmpel(k, heute = today(), warnTage = 30) {
     if (k.status === 'ausgezahlt') return 'grau';
     const v = verjaehrung(k, heute);
     if (!v) return 'grau';
-    if (v.restTage < 30) return 'rot';
+    if (v.restTage < warnTage) return 'rot';
     if (v.seitUebergabe > 90) return 'gelb';
     return 'gruen';
   }
@@ -347,10 +370,12 @@
     const w = data.wv.find(x => x.id === id); if (!w) return null;
     w.status = 'erledigt'; w.erledigtAm = am; return w;
   }
-  function snoozeWV(data, id, tage, heute = today()) {
+  /** WV verschieben: ab WV-Datum (bzw. heute, falls überfällig) um n Tage/Werktage/Wochen/Monate */
+  function snoozeWV(data, id, n, heute = today(), einheit = 'tage') {
     const w = data.wv.find(x => x.id === id); if (!w) return null;
-    w.datum = wvDatum(data, addDays(maxISO(w.datum, heute), tage)); return w;
+    w.datum = wvDatum(data, plusEinheit(maxISO(w.datum, heute), n, einheit, data.settings.feiertageNRW !== false)); return w;
   }
+  function setWVDatum(data, id, iso) { const w = data.wv.find(x => x.id === id); if (!w) return null; w.datum = wvDatum(data, iso); return w; }
   /** Offene Auto-WV eines Falls schließen. regeln: true = alle, Array = nur diese Regeln */
   function closeWV(data, bereich, refId, regeln = true, am = today()) {
     let n = 0;
@@ -837,7 +862,7 @@
     mieterName, briefanrede,
     defaultSettings, emptyData, normalize, migratePrototype, stufeAusText,
     offenSumme, kuendigungsCheck, verteileZahlung, kautionsabrechnung, verjaehrung, kautionAmpel, ratenplan,
-    wvDatum, createWV, completeWV, snoozeWV, closeWV, offeneWV, addVerlauf, wvRegeln, applyAction, findFall,
+    wvDatum, createWV, completeWV, snoozeWV, setWVDatum, plusEinheit, WV_EINHEITEN, defaultUI, closeWV, offeneWV, addVerlauf, wvRegeln, applyAction, findFall,
     getPath, vorlageZuHTML, vorlageZuText,
     parseCSV, guessMapping, typAusText, importOPOS, normName, nameAufteilen, parseMietzeit, parseSaldo, parseWV, erkenneFormat, titelMieter, parseJsonBlatt, parseSaldenBlatt, findeMieter, saldoAbgleich, importSalden, asciiDateiname, buildEML
   };

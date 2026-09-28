@@ -25,9 +25,9 @@
     ['dashboard', 'Dashboard'], ['opos', 'OPOS'], ['ih', 'Instandhaltung'], ['kaution', 'Kaution'],
     ['stamm', 'Objekte & Mieter'], ['kontakte', 'Kontakte'], ['einst', 'Einstellungen']
   ];
-  const GEWERKE = ['Sanitär', 'Heizung', 'Elektro', 'Dach', 'Maler', 'Schreiner/Tischler', 'Schlüsseldienst', 'Glaser', 'Rohrreinigung',
-    'Schädlingsbekämpfung', 'Fenster/Türen', 'Bodenleger', 'Garten', 'Reinigung', 'Aufzug', 'Sonstiges'];
-  App.GEWERKE = GEWERKE;
+  const UI = () => App.data.settings.ui;
+  App.ui = UI;
+  Object.defineProperty(App, 'GEWERKE', { get: () => UI().gewerke });
 
   /* ---------- Speicher ---------- */
   App.load = function () {
@@ -173,6 +173,12 @@
   };
 
   /* ---------- WV-Tabelle (Dashboard + Fälle) ---------- */
+  const EINHEIT_KURZ = { tage: '', werktage: ' WT', wochen: ' Wo', monate: ' Mo' };
+  function snoozeButtons(id) {
+    const u = UI();
+    return (u.wvButtons || []).map(n => '<button class="s" data-act="wvSnooze" data-id="' + id + '" data-t="' + n + '" title="+' + n + ' ' + C.WV_EINHEITEN[u.wvEinheit] + '">+' + n + EINHEIT_KURZ[u.wvEinheit] + '</button>').join('');
+  }
+  function aufgabenListe() { return '<datalist id="dl_wvAufgaben">' + (UI().wvAufgaben || []).map(a => '<option value="' + esc(a) + '">').join('') + '</datalist>'; }
   App.wvTabelle = function (list, o = {}) {
     if (!list.length) return H.leer(o.leer || 'Keine Wiedervorlagen.');
     const t = C.today();
@@ -184,7 +190,7 @@
         (o.fall !== false ? '<td>' + H.chip(C.BEREICHE[w.bereich], 'b-' + w.bereich) + '</td><td><a href="#" data-act="openFall" data-b="' + w.bereich + '" data-id="' + w.refId + '">' + esc(H.fallLabel(w.bereich, f)) + '</a></td>' : '') +
         '<td>' + esc(w.aufgabe) + '</td><td class="muted" title="' + (w.erstelltDurch === 'auto' ? 'automatisch erzeugt' : 'manuell') + '">' + (w.erstelltDurch === 'auto' ? '⚙' : '✎') + '</td>' +
         '<td class="r nw">' + (w.status === 'offen'
-          ? '<button class="s" data-act="wvSnooze" data-id="' + w.id + '" data-t="3">+3</button><button class="s" data-act="wvSnooze" data-id="' + w.id + '" data-t="7">+7</button><button class="s" data-act="wvSnooze" data-id="' + w.id + '" data-t="14">+14</button>' +
+          ? '<span class="wvbtns">' + snoozeButtons(w.id) + '<button class="s mehr" data-act="wvSnoozeFrei" data-id="' + w.id + '" title="andere Anzahl oder festes Datum">+…</button></span>' +
             '<button class="s ok" data-act="wvDone" data-id="' + w.id + '" title="erledigt">✓</button><button class="s ok" data-act="wvDoneNeu" data-id="' + w.id + '" title="erledigt + neue WV">✓+</button>'
           : '<small class="muted">erledigt ' + fmtDatum(w.erledigtAm) + '</small> <button class="s" data-act="wvReopen" data-id="' + w.id + '" title="wieder öffnen">↺</button>') +
         '</td></tr>';
@@ -200,14 +206,35 @@
     openFall(ds) { App.tab = ds.b; App.detail = ds.id; App.render(); window.scrollTo(0, 0); },
     back() { App.detail = null; App.render(); },
     tab(ds) { App.tab = ds.tab; App.detail = null; App.render(); window.scrollTo(0, 0); },
-    wvSnooze(ds) { C.snoozeWV(App.data, ds.id, +ds.t); App.commit(); toast('WV verschoben.'); },
+    wvSnooze(ds) { const w = C.snoozeWV(App.data, ds.id, +ds.t, C.today(), UI().wvEinheit); App.commit(); toast('WV verschoben auf ' + fmtDatum(w.datum) + '.'); },
+    async wvSnoozeFrei(ds) {
+      const w = App.data.wv.find(x => x.id === ds.id); if (!w) return;
+      const letzte = App.f.snooze || { anzahl: 5, einheit: UI().wvEinheit };
+      const basis = C.maxISO(w.datum, C.today());
+      const chips = [1, 2, 3, 4, 5, 7, 10, 14, 21, 30].map(n => '<button type="button" class="s" data-n="' + n + '">+' + n + '</button>').join('');
+      const v = await formModal('WV verschieben', [
+        { k: 'html', t: 'html', html: '<p class="muted">Aktuell: <b>' + fmtDatum(w.datum) + '</b> – ' + esc(w.aufgabe) + '</p><div class="chips">' + chips + '</div>' },
+        { k: 'anzahl', l: 'um', t: 'number', min: 1, req: true }, { k: 'einheit', l: 'Einheit', t: 'select', o: Object.entries(C.WV_EINHEITEN) },
+        { k: 'datum', l: 'oder festes Datum', t: 'date', hint: 'überschreibt „um …“' },
+        { k: 'html2', t: 'html', html: '<p class="small">Neues Datum: <b id="snzVorschau"></b> <span class="muted">(Wochenende/Feiertag → nächster Werktag)</span></p>' }
+      ], letzte, { ok: 'Verschieben', onOpen(d) {
+        const f = d.querySelector('form'); const out = d.querySelector('#snzVorschau');
+        const upd = () => { const x = collect(f); const iso = x.datum || C.plusEinheit(basis, x.anzahl, x.einheit); out.textContent = x.datum || x.anzahl ? fmtDatum(C.wvDatum(App.data, iso)) : '–'; };
+        d.querySelectorAll('[data-n]').forEach(b => { b.onclick = () => { f.anzahl.value = b.dataset.n; f.datum.value = ''; upd(); }; });
+        f.addEventListener('input', upd); f.addEventListener('change', upd); upd();
+      } });
+      if (!v) return;
+      App.f.snooze = { anzahl: v.anzahl, einheit: v.einheit };
+      const n = v.datum ? C.setWVDatum(App.data, w.id, v.datum) : C.snoozeWV(App.data, w.id, v.anzahl, C.today(), v.einheit);
+      App.commit(); toast('WV verschoben auf ' + fmtDatum(n.datum) + '.');
+    },
     wvDone(ds) { C.completeWV(App.data, ds.id); App.commit(); },
     wvReopen(ds) { const w = App.data.wv.find(x => x.id === ds.id); if (w) { w.status = 'offen'; delete w.erledigtAm; App.commit(); } },
     async wvDoneNeu(ds) {
       const w = App.data.wv.find(x => x.id === ds.id); if (!w) return;
       const v = await formModal('Erledigt + neue WV', [
-        { k: 'datum', l: 'Neue WV am', t: 'date', req: true, d: C.addDays(C.today(), 7) },
-        { k: 'aufgabe', l: 'Aufgabe', req: true, full: true, d: w.aufgabe }], {}, { ok: 'Anlegen' });
+        { k: 'datum', l: 'Neue WV am', t: 'date', req: true, d: C.addDays(C.today(), UI().neuWvTage) },
+        { k: 'aufgabe', l: 'Aufgabe', req: true, full: true, d: w.aufgabe, list: 'dl_wvAufgaben' }], {}, { ok: 'Anlegen', outro: aufgabenListe() });
       if (!v) return;
       C.completeWV(App.data, w.id);
       const n = C.createWV(App.data, w.bereich, w.refId, v.datum, v.aufgabe, { erstelltDurch: 'manuell' });
@@ -224,8 +251,8 @@
         if (!v0) return; [b, id] = v0.fall.split('|');
       }
       const v = await formModal('Neue Wiedervorlage', [
-        { k: 'datum', l: 'Datum', t: 'date', req: true, d: C.addDays(C.today(), 7) },
-        { k: 'aufgabe', l: 'Aufgabe', req: true, full: true }]);
+        { k: 'datum', l: 'Datum', t: 'date', req: true, d: C.addDays(C.today(), UI().neuWvTage) },
+        { k: 'aufgabe', l: 'Aufgabe', req: true, full: true, list: 'dl_wvAufgaben', ph: 'Vorschlag wählen oder frei eingeben' }], {}, { outro: aufgabenListe() });
       if (!v) return;
       const n = C.createWV(App.data, b, id, v.datum, v.aufgabe, { erstelltDurch: 'manuell' });
       App.commit(); toast('WV angelegt für ' + fmtDatum(n.datum) + '.');
@@ -307,7 +334,9 @@
       const inObj = w => !f.objekt || (H.objektVonFall(w.bereich, H.fall(w.bereich, w.refId)) || {}).id === f.objekt;
       const cnt = { ueber: offen.filter(w => w.datum < t).length, heute: offen.filter(w => w.datum === t).length, w7: offen.filter(w => w.datum > t && w.datum <= C.addDays(t, 7)).length };
       const rueck = C.sum(d.opos.filter(x => x.stufe !== 'erledigt'), x => C.offenSumme(x.posten));
-      const kVerj = d.kaution.filter(k => k.status !== 'ausgezahlt' && (C.verjaehrung(k) || { restTage: 999 }).restTage < 30);
+      const vt = Number(UI().verjaehrungWarnTage) || 30;
+      const kVerj = d.kaution.filter(k => k.status !== 'ausgezahlt' && (C.verjaehrung(k) || { restTage: 9999 }).restTage < vt);
+      const zeig = UI().kacheln || [];
       let list = offen;
       if (f.zeit === 'ueber') list = list.filter(w => w.datum < t);
       else if (f.zeit === 'heute') list = list.filter(w => w.datum === t);
@@ -323,14 +352,15 @@
       return (backupAlt && (d.opos.length + d.ih.length + d.kaution.length) ? '<div class="banner warn">💾 ' + (lb ? 'Letztes Backup am ' + fmtDatum(lb) + '.' : 'Noch kein Backup erstellt.') +
         ' Die Daten liegen nur in diesem Browser – bitte wöchentlich sichern. <button data-act="backupExport">Jetzt Backup speichern</button></div>' : '') +
         '<div class="kacheln">' +
-        kachel(cnt.ueber, 'überfällig', cnt.ueber ? 'rot' : '', 'data-act="dashZeit" data-z="ueber"') +
-        kachel(cnt.heute, 'heute fällig', cnt.heute ? 'gelb' : '', 'data-act="dashZeit" data-z="heute"') +
-        kachel(cnt.w7, 'in 7 Tagen', '', 'data-act="dashZeit" data-z="7"') +
-        kachel(offen.filter(w => w.bereich === 'opos').length, 'WV OPOS', 'b-opos', 'data-act="dashBereich" data-b="opos"') +
-        kachel(offen.filter(w => w.bereich === 'ih').length, 'WV Instandhaltung', 'b-ih', 'data-act="dashBereich" data-b="ih"') +
-        kachel(offen.filter(w => w.bereich === 'kaution').length, 'WV Kaution', 'b-kaution', 'data-act="dashBereich" data-b="kaution"') +
-        kachel(fmtEUR(rueck), 'Rückstand gesamt', rueck ? 'rot-t' : '', 'data-act="tab" data-tab="opos"') +
-        kachel(kVerj.length, 'Kautionen: Verjährung < 30 T', kVerj.length ? 'rot' : '', 'data-act="tab" data-tab="kaution"') +
+        [['ueber', () => kachel(cnt.ueber, 'überfällig', cnt.ueber ? 'rot' : '', 'data-act="dashZeit" data-z="ueber"')],
+         ['heute', () => kachel(cnt.heute, 'heute fällig', cnt.heute ? 'gelb' : '', 'data-act="dashZeit" data-z="heute"')],
+         ['w7', () => kachel(cnt.w7, 'in 7 Tagen', '', 'data-act="dashZeit" data-z="7"')],
+         ['opos', () => kachel(offen.filter(w => w.bereich === 'opos').length, 'WV OPOS', 'b-opos', 'data-act="dashBereich" data-b="opos"')],
+         ['ih', () => kachel(offen.filter(w => w.bereich === 'ih').length, 'WV Instandhaltung', 'b-ih', 'data-act="dashBereich" data-b="ih"')],
+         ['kaution', () => kachel(offen.filter(w => w.bereich === 'kaution').length, 'WV Kaution', 'b-kaution', 'data-act="dashBereich" data-b="kaution"')],
+         ['rueck', () => kachel(fmtEUR(rueck), 'Rückstand gesamt', rueck ? 'rot-t' : '', 'data-act="tab" data-tab="opos"')],
+         ['verj', () => kachel(kVerj.length, 'Kautionen: Verjährung < ' + vt + ' T', kVerj.length ? 'rot' : '', 'data-act="tab" data-tab="kaution"')]]
+          .filter(([k]) => zeig.includes(k)).map(([, f2]) => f2()).join('') +
         '</div>' +
         '<section class="card"><div class="toolbar"><h2>Wiedervorlagen</h2>' +
         '<select data-filter="dash.zeit">' + [['faellig', 'fällig (bis heute)'], ['ueber', 'überfällig'], ['heute', 'heute'], ['7', 'nächste 7 Tage'], ['30', 'nächste 30 Tage'], ['alle', 'alle offenen'], ['erledigt', 'erledigte']]
@@ -462,7 +492,7 @@
       const k = ds.id ? H.kontakt(ds.id) : null;
       const v = await formModal(k ? 'Kontakt bearbeiten' : 'Neuer Kontakt', [
         { k: 'typ', l: 'Typ', t: 'select', o: Object.entries(KTYP), d: ds.typ || 'handwerker' }, { k: 'firma', l: 'Firma / Name', req: true },
-        { k: 'gewerk', l: 'Gewerke', t: 'multi', o: GEWERKE.map(g => [g, g]) },
+        { k: 'gewerk', l: 'Gewerke', t: 'multi', o: App.GEWERKE.map(g => [g, g]) },
         { k: 'ansprechpartner', l: 'Ansprechpartner' }, { k: 'tel', l: 'Telefon', t: 'tel' }, { k: 'email', l: 'E-Mail', t: 'email' },
         { k: 'anschrift', l: 'Anschrift', t: 'textarea', rows: 2 }, { k: 'notiz', l: 'Notiz', t: 'textarea', rows: 2 }
       ], k || {}, { wide: true });
@@ -482,6 +512,30 @@
     ihMieter: 'IH: Frist Anfrage an Handwerker (Tage)', weiterbelastung: 'IH: Zahlungsfrist Weiterbelastung (Tage)',
     kautionAbrechnungMonate: 'Kaution: Abrechnung nach Übergabe (Monate)', auszahlung: 'Kaution: Auszahlung prüfen nach (Tagen)', bankverbindung: 'Kaution: Frist Bankverbindung (Tage)'
   };
+
+  const KACHELN = [['ueber', 'überfällig'], ['heute', 'heute fällig'], ['w7', 'in 7 Tagen'], ['opos', 'WV OPOS'], ['ih', 'WV Instandhaltung'], ['kaution', 'WV Kaution'], ['rueck', 'Rückstand gesamt'], ['verj', 'Kautionen mit naher Verjährung']];
+  const DASH_ZEIT = [['faellig', 'fällig (bis heute)'], ['ueber', 'überfällig'], ['heute', 'heute'], ['7', 'nächste 7 Tage'], ['30', 'nächste 30 Tage'], ['alle', 'alle offenen']];
+  function anpassenHTML() {
+    const u = UI();
+    const felder = [
+      { k: 'wvButtons', l: 'Schnell-Buttons zum Verschieben', ph: '1, 2, 3, 4', hint: 'Zahlen mit Komma getrennt, z. B. „1, 2, 3, 4, 7, 14“. Daneben gibt es immer „+…“ für eine freie Anzahl oder ein Datum.' },
+      { k: 'wvEinheit', l: 'Schnell-Buttons zählen in', t: 'select', o: Object.entries(C.WV_EINHEITEN) },
+      { k: 'neuWvTage', l: 'Neue WV: Vorschlag in … Tagen', t: 'number', min: 0 },
+      { k: 'verjaehrungWarnTage', l: 'Kaution: Warnung … Tage vor Verjährung', t: 'number', min: 1 },
+      { k: 'wvAufgaben', l: 'Vorschläge für WV-Aufgaben (eine je Zeile)', t: 'textarea', rows: 5 },
+      { k: 'gewerke', l: 'Gewerke (eine je Zeile)', t: 'textarea', rows: 5 },
+      { k: 'startTab', l: 'Beim Öffnen anzeigen', t: 'select', o: TABS.filter(([k]) => k !== 'einst') },
+      { k: 'dashZeit', l: 'Dashboard: WV-Filter beim Öffnen', t: 'select', o: DASH_ZEIT },
+      { k: 'tabs', l: 'Sichtbare Bereiche', t: 'multi', o: TABS.filter(([k]) => k !== 'einst').map(([k, l]) => [k, esc(l)]) },
+      { k: 'kacheln', l: 'Kacheln im Dashboard', t: 'multi', o: KACHELN },
+      { k: 'akzent', l: 'Akzentfarbe', t: 'color' }, { k: 'kopf', l: 'Farbe Kopfleiste', t: 'color' },
+      { k: 'schrift', l: 'Schriftgröße (px)', t: 'number', min: 11, max: 20, step: '0.5' },
+      { k: 'kompakt', l: 'Kompakte Tabellen (mehr Zeilen auf dem Bildschirm)', t: 'checkbox', full: true }
+    ];
+    const vals = Object.assign({}, u, { wvButtons: (u.wvButtons || []).join(', '), wvAufgaben: (u.wvAufgaben || []).join('\n'), gewerke: (u.gewerke || []).join('\n') });
+    return '<section class="card"><h2>Anpassen</h2><form id="setUI"><div class="grid">' + felder.map(x => feld(x, vals[x.k])).join('') + '</div>' +
+      '<div class="actions"><button type="button" class="del" data-act="uiReset">Auf Standard zurücksetzen</button><button type="button" class="primary" data-act="uiSave">Speichern</button></div></form></section>';
+  }
   App.views.einst = {
     render() {
       const s = App.data.settings, f = App.f.einst;
@@ -509,6 +563,7 @@
         '<div class="actions"><button type="button" class="primary" data-act="settingsSave" data-form="setFirma">Speichern</button></div></form></section>' +
         '<section class="card"><h2>Fristen & Regeln</h2><form id="setRegeln"><div class="grid">' + regelFelder.map(x => feld(x, vals[x.k.startsWith('fr_') ? x.k : x.k])).join('') + '</div>' +
         '<div class="actions"><button type="button" class="primary" data-act="settingsSave" data-form="setRegeln">Speichern</button></div></form></section></div>' +
+        anpassenHTML() +
         '<section class="card"><div class="toolbar"><h2>Vorlagen (Textbausteine)</h2><select data-change="vorlageWahl">' + vorlagenOpt + '</select>' +
         (v.geaendert ? H.chip('angepasst', 'gelb') : H.chip('Standard')) + '</div>' +
         '<div class="vorlagen"><div><form id="vorlForm"><label class="fld full"><span>Betreff</span><input name="betreff" value="' + esc(v.betreff) + '"></label>' +
@@ -530,6 +585,22 @@
     }
   };
   Object.assign(App.act, {
+    uiSave() {
+      const v = collect($('#setUI')); const u = UI();
+      const zeilen = t => String(t || '').split('\n').map(x => x.trim()).filter(Boolean);
+      const btn = String(v.wvButtons).split(/[,;\s]+/).map(Number).filter(n => n > 0 && n < 1000);
+      Object.assign(u, v, {
+        wvButtons: Array.from(new Set(btn)).slice(0, 12), wvAufgaben: zeilen(v.wvAufgaben), gewerke: zeilen(v.gewerke),
+        neuWvTage: Number(v.neuWvTage) || 0, verjaehrungWarnTage: Number(v.verjaehrungWarnTage) || 30, schrift: Math.min(20, Math.max(11, Number(v.schrift) || 14.5))
+      });
+      if (!u.tabs.length) u.tabs = ['dashboard'];
+      if (!u.tabs.includes(u.startTab)) u.startTab = u.tabs[0];
+      App.commit(); toast('Anpassungen gespeichert.');
+    },
+    async uiReset() {
+      if (!await confirmDlg('Alle Anpassungen (Buttons, Farben, Listen, Ansicht) auf Standard zurücksetzen?')) return;
+      App.data.settings.ui = C.defaultUI(); App.commit();
+    },
     settingsSave(ds) {
       const v = collect($('#' + ds.form)); const s = App.data.settings;
       Object.keys(v).forEach(k => { if (k.startsWith('fr_')) s.fristen[k.slice(3)] = Number(v[k]) || 0; else s[k] = v[k]; });
@@ -640,10 +711,19 @@
   }
 
   /* ---------- Rendern ---------- */
+  function sichtbareTabs() { const t = UI().tabs || []; return TABS.filter(([k]) => k === 'einst' || t.includes(k)); }
+  function applyTheme() {
+    const u = UI(), r = document.documentElement.style;
+    r.setProperty('--pri', u.akzent || '#1f5fa8'); r.setProperty('--kopf', u.kopf || '#15385f');
+    r.setProperty('--fs', (Number(u.schrift) || 14.5) + 'px');
+    document.body.classList.toggle('kompakt', !!u.kompakt);
+  }
   App.render = function () {
     const nav = $('#nav'); const t = C.today();
     const ueber = App.data.wv.filter(w => w.status === 'offen' && w.datum <= t);
-    nav.innerHTML = TABS.map(([k, l], i) => {
+    applyTheme();
+    if (!sichtbareTabs().some(([k]) => k === App.tab)) { App.tab = sichtbareTabs()[0][0]; App.detail = null; }
+    nav.innerHTML = sichtbareTabs().map(([k, l], i) => {
       const n = ['opos', 'ih', 'kaution'].includes(k) ? ueber.filter(w => w.bereich === k).length : k === 'dashboard' ? ueber.length : 0;
       return '<button class="' + (App.tab === k ? 'on' : '') + '" data-act="tab" data-tab="' + k + '" title="Alt+' + (i + 1) + '">' + l + (n ? '<span class="badge">' + n + '</span>' : '') + '</button>';
     }).join('');
@@ -661,6 +741,7 @@
   let _filterTimer;
   function init() {
     App.load();
+    App.tab = UI().startTab || 'dashboard'; App.f.dash.zeit = UI().dashZeit || 'faellig';
     document.addEventListener('click', e => {
       const sb = e.target.closest('#sucheErg button'); if (sb) { e.preventDefault(); return sucheOeffnen(_treffer[+sb.dataset.i].act); }
       if (!e.target.closest('.suche')) $('#sucheErg').hidden = true;
@@ -686,7 +767,7 @@
     document.addEventListener('keydown', e => {
       if ($('#dlg').open) return;
       const inFeld = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) || document.activeElement.isContentEditable;
-      if (e.altKey && /^[1-7]$/.test(e.key)) { e.preventDefault(); App.act.tab({ tab: TABS[+e.key - 1][0] }); }
+      if (e.altKey && /^[1-7]$/.test(e.key)) { const t = sichtbareTabs()[+e.key - 1]; if (t) { e.preventDefault(); App.act.tab({ tab: t[0] }); } }
       else if ((e.ctrlKey && e.key.toLowerCase() === 'k') || (e.key === '/' && !inFeld)) { e.preventDefault(); $('#suche').focus(); $('#suche').select(); }
       else if (e.key === 'Escape' && App.detail && !inFeld) App.act.back();
       else if (e.altKey && e.key.toLowerCase() === 'n') {
