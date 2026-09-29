@@ -730,6 +730,7 @@ Mit freundlichen Grüßen
       if (wv) { const t = hat(sp.wv, wv); alles = alles && t; teile.push('WV ' + fmtDatum(wv) + (t ? ' ✓' : ' ✗')); }
       if (termin) { const t = hat(sp.termin, termin); alles = alles && t; teile.push('Termin ' + fmtDatum(termin) + (t ? ' ✓' : ' ✗')); }
       if (a.schritt != null && !a.neu) { const t = zelle(sp.schritt).trim() === String(a.schritt).trim(); alles = alles && t; teile.push('nächster Schritt' + (t ? ' ✓' : ' ✗')); }
+      (a.texte || []).forEach(x => { const t = zelle(sp[x.col]).replace(/\s+/g, ' ').trim() === String(x.wert).replace(/\s+/g, ' ').trim(); alles = alles && t; teile.push(x.label + (t ? ' ✓' : ' ✗')); });
       if (a.neu) { const t = zelle(sp.aufgabe).split('\n')[0].trim() === String(a.werte.aufgabe).split('\n')[0].trim(); alles = alles && t; teile.push('neue Zeile' + (t ? ' ✓' : ' ✗')); }
       zeilen.push('Zeile ' + a.zeile + ' – ' + a.f.titel + ': ' + teile.join(', '));
     });

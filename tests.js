@@ -432,5 +432,33 @@ section('Excel: Datum behält Zellfarbe');
   eq(C.stilAlsDatum(ctx, '2', '1'), '3', 'Stil wird wiederverwendet');
 }
 
+
+section('Excel: SB, Prio, Material, Besonderheiten zurückschreiben');
+{
+  const e = C.parseIhListe(ihRows, '2026-09-28', [226, 227, 228, 229])[0];
+  eq([e.spalten.material, e.spalten.besonderheiten, e.roh.sb], [5, 10, 'Cem'], 'Spalten Material/Besonderheiten erkannt');
+  const dS = C.emptyData(); C.importIhListe(dS, [e], { stand: '2026-09-28', heute: '2026-09-28' });
+  const f = dS.ih[0];
+  eq(C.excelAenderungen(dS).filter(a => a.texte && a.texte.length).length, 0, 'nach Import: nichts zu schreiben');
+  f.sb = 'Fais'; f.besonderheiten = 'Schlüssel bei Mieter';
+  const aS = C.excelAenderungen(dS).find(a => a.f === f);
+  eq(aS.texte.map(t => [t.label, t.wert]), [['SB', 'Fais'], ['Besonderheiten', 'Schlüssel bei Mieter']], 'geänderter SB + Besonderheiten werden angeboten');
+  const sh = '<worksheet><sheetData><row r="227"><c r="C227" t="inlineStr"><is><t>Musterweg 12, 2.OG links</t></is></c><c r="D227" s="7" t="inlineStr"><is><t>Cem</t></is></c><c r="E227" t="inlineStr"><is><t>Rollos instandsetzen\nMotor prüfen</t></is></c><c r="K227" s="8" t="inlineStr"><is><t>Schlüssel beim HM</t></is></c></row></sheetData></worksheet>';
+  const r = C.excelBlattAktualisieren(sh, [], '', [Object.assign({}, aS, { wv: null, termin: null, schritt: null })]);
+  eq([r.ok.length, C.zeileLesen(r.sheet, 227, [])[3], C.zeileLesen(r.sheet, 227, [])[10]], [1, 'Fais', 'Schlüssel bei Mieter'], 'in die Zeile geschrieben');
+  truthy(r.sheet.includes('<c r="D227" s="7" t="inlineStr">'), 'Zellstil bleibt');
+  C.excelGeschrieben(r.ok);
+  eq(C.excelAenderungen(dS).filter(a => a.texte && a.texte.length).length, 0, 'danach nichts mehr offen');
+  f.prio = 'AA';
+  eq(C.excelAenderungen(dS).find(a => a.f === f).texte.map(t => [t.col, t.wert]), [['mieter', 'AA']], 'Prio ohne eigene Spalte → Spalte „Mieter + Tel“ (dort stand die Prio)');
+  f.listeRoh.mieter = 'Hr. Alimi 0170 123'; 
+  eq(C.excelAenderungen(dS).filter(a => a.f === f).length, 0, 'Telefonnummer wird nie mit Prio überschrieben');
+  f.prio = f.listeWerte.prio; f.listeRoh.mieter = 'A+';
+  const shK = sh.replace('<t>Cem</t>', '<t>Tom</t>');
+  f.sb = 'Cem2';
+  const rK = C.excelBlattAktualisieren(shK, [], '', [Object.assign({}, C.excelAenderungen(dS).find(a => a.f === f), { wv: null, termin: null, schritt: null })]);
+  eq([rK.ok.length, rK.konflikt[0] && rK.konflikt[0].feld], [0, 'SB'], 'SB in Excel von Hand geändert → nicht überschrieben');
+}
+
 console.log('\n' + ok + ' bestanden, ' + fail + ' fehlgeschlagen');
 process.exit(fail ? 1 : 0);

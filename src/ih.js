@@ -57,7 +57,7 @@
     }
     C.excelGeschrieben(res.ok);
     res.ok.forEach(a => C.addVerlauf(App.data, 'ih', a.f.id, 'excel', (a.neu ? 'Als neue Zeile ' + a.zeile + ' in die Instandhaltungsliste eingetragen' : 'In Instandhaltungsliste eingetragen (Zeile ' + a.zeile + ')') +
-      ': ' + [a.wv || (a.neu && a.werte.wv) ? 'WV ' + fmtDatum(a.wv || a.werte.wv) : '', a.termin ? 'Termin ' + fmtDatum(a.termin) : '', a.schritt != null && !a.neu ? 'nächster Schritt „' + a.schritt + '“' : ''].filter(Boolean).join(', ')));
+      ': ' + [a.wv || (a.neu && a.werte.wv) ? 'WV ' + fmtDatum(a.wv || a.werte.wv) : '', a.termin ? 'Termin ' + fmtDatum(a.termin) : '', a.schritt != null && !a.neu ? 'nächster Schritt „' + a.schritt + '“' : ''].concat((a.texte || []).map(t => t.label + ' „' + t.wert + '“')).filter(Boolean).join(', ')));
     App.data.meta.ihExcelGeschrieben = new Date().toISOString();
     App.data.meta.ihExcelStatus = { zeit: new Date().toISOString(), ok: !pruef || pruef.ok, text: (res.ok.length ? res.ok.length + ' eingetragen' : 'nichts eingetragen') + (res.konflikt.length ? ', ' + res.konflikt.length + ' Konflikt(e)' : '') + (res.fehlt.length ? ', ' + res.fehlt.length + ' nicht gefunden' : '') + (pruef && !pruef.ok ? ' – Kontrolle fehlgeschlagen' : ''), zeilen: pruef ? pruef.zeilen : [] };
     App.save();
@@ -82,7 +82,7 @@
       if (!erlaubt) { App.data.meta.ihExcelStatus = { zeit: new Date().toISOString(), ok: false, text: 'Browser hat den Schreibzugriff noch nicht erlaubt – einmal „⇄ In Excel eintragen“ klicken.' }; App.save(); App.render(); return; }
       const r = await excelSchreiben(aend, h, await h.getFile());
       if (r.fehler) App.toast('Excel: ' + r.fehler + (r.gesperrt ? ' Die Änderung wird eingetragen, sobald die Datei geschlossen ist.' : ''), 'warn', 9000);
-      else if (r.res.ok.length) App.toast('✓ In Excel eingetragen: ' + r.res.ok.map(a => 'Zeile ' + a.zeile + (a.wv ? ' WV ' + fmtDatum(a.wv) : '') + (a.termin ? ' Termin ' + fmtDatum(a.termin) : '')).join(', ') + (r.pruef && r.pruef.ok ? ' (geprüft)' : ''), r.pruef && !r.pruef.ok ? 'warn' : 'ok', 6000);
+      else if (r.res.ok.length) App.toast('✓ In Excel eingetragen: ' + r.res.ok.map(a => 'Zeile ' + a.zeile + (a.wv ? ' WV ' + fmtDatum(a.wv) : '') + (a.termin ? ' Termin ' + fmtDatum(a.termin) : '') + (a.texte || []).map(t => ' ' + t.label).join('')).join(', ') + (r.pruef && r.pruef.ok ? ' (geprüft)' : ''), r.pruef && !r.pruef.ok ? 'warn' : 'ok', 6000);
       if (r.res && (r.res.konflikt.length || r.res.fehlt.length)) App.toast('Excel: ' + [r.res.konflikt.length ? r.res.konflikt.length + '× in Excel inzwischen von Hand geändert (nicht überschrieben)' : '', r.res.fehlt.length ? r.res.fehlt.length + '× Zeile nicht gefunden' : ''].filter(Boolean).join(', ') + ' – Liste neu einlesen.', 'warn', 9000);
       App.render();
     } finally {
@@ -116,7 +116,7 @@
       '<dt>Schreibrecht</dt><dd>' + rechtText + '</dd>' +
       '<dt>Automatisch eintragen</dt><dd>' + (App.ui().excelAuto === false ? 'aus' : 'an – nach jeder WV-/Termin-/Schritt-Änderung') + '</dd>' +
       '<dt>Zuletzt</dt><dd>' + (st ? new Date(st.zeit).toLocaleString('de-DE') + ' – ' + (st.ok ? '✓ ' : '✗ ') + esc(st.text) + (st.zeilen && st.zeilen.length ? '<ul class="small">' + st.zeilen.map(z => '<li>' + esc(z) + '</li>').join('') + '</ul>' : '') : '–') + '</dd>' +
-      '<dt>Noch offen</dt><dd>' + (aend.length ? '<ul class="small">' + aend.map(a => '<li>' + esc(a.neu ? 'neue Zeile: ' + a.f.titel : 'Zeile ' + a.f.listenZeile + ' – ' + a.f.titel) + (a.wv || (a.neu && a.werte.wv) ? ' · WV ' + fmtDatum(a.wv || a.werte.wv) : '') + (a.termin ? ' · Termin ' + fmtDatum(a.termin) : '') + (a.schritt != null && !a.neu ? ' · Schritt' : '') + '</li>').join('') + '</ul>' : 'nichts') + '</dd></dl>' +
+      '<dt>Noch offen</dt><dd>' + (aend.length ? '<ul class="small">' + aend.map(a => '<li>' + esc(a.neu ? 'neue Zeile: ' + a.f.titel : 'Zeile ' + a.f.listenZeile + ' – ' + a.f.titel) + (a.wv || (a.neu && a.werte.wv) ? ' · WV ' + fmtDatum(a.wv || a.werte.wv) : '') + (a.termin ? ' · Termin ' + fmtDatum(a.termin) : '') + (a.schritt != null && !a.neu ? ' · Schritt' : '') + (a.texte || []).map(t => ' · ' + t.label).join('') + '</li>').join('') + '</ul>' : 'nichts') + '</dd></dl>' +
       '<p class="small muted">Nur WV von <b>Instandhaltungs-Aufgaben</b> gehören in die Liste (nicht OPOS/Kaution). Eingetragen wird die nächste WV, der Termin und der nächste Schritt.</p>',
       buttons: [{ label: 'Schließen', value: '' }, { label: App.ui().excelAuto === false ? 'Automatik einschalten' : 'Automatik ausschalten', value: 'auto', type: 'submit' }, ...(D.DATEI_API ? [{ label: 'Andere Datei verbinden', value: 'neu' }] : []), ...(aend.length ? [{ label: '⇄ Jetzt eintragen', value: 'jetzt', cls: 'primary' }] : [])] });
     if (r.action === 'auto') { App.ui().excelAuto = App.ui().excelAuto === false; App.commit(); }
@@ -258,11 +258,11 @@
       const opts = aend.map((a, i) => [String(i), a.neu
         ? '<span class="chip gruen">neue Zeile</span> ' + esc(a.werte.objekt) + ' · <b>' + esc(a.f.titel) + '</b>' + (a.werte.wv ? ' · WV ' + fmtDatum(a.werte.wv) : '') + (a.werte.schritt ? ' · → ' + esc(a.werte.schritt) : '')
         : esc(objektName(a.f)) + ' · <b>' + esc(a.f.titel) + '</b> <small class="muted">(Zeile ' + (a.f.listenZeile || '?') + ')</small>' + (a.wv ? ' · WV ' + pfeil(a.f.listeWVDatum, a.wv) : '') +
-          (a.termin ? ' · Termin ' + pfeil(a.f.listeTerminDatum, a.termin) : '') + (a.schritt != null ? ' · nächster Schritt „' + esc(a.schritt || '(leer)') + '“' : '')]);
+          (a.termin ? ' · Termin ' + pfeil(a.f.listeTerminDatum, a.termin) : '') + (a.schritt != null ? ' · nächster Schritt „' + esc(a.schritt || '(leer)') + '“' : '') + (a.texte || []).map(t => ' · ' + esc(t.label) + ' „' + esc(t.wert || '(leer)') + '“').join('')]);
       const v = await App.formModal('⇄ In die Instandhaltungsliste eintragen', [
         { k: 'sel', l: aend.length + ' Änderung(en)' + (h ? ' → ' + h.name : ''), t: 'multi', cls: 'liste', o: opts }
       ], { sel: opts.map(o => o[0]) }, { wide: true, ok: D.DATEI_API ? (h ? '⇄ In ' + esc(h.name) + ' eintragen' : 'Excel-Datei wählen & eintragen') : 'Datei wählen …',
-        intro: '<p class="small muted">Geändert werden nur die Zellen WV, Termin und nächster Schritt der jeweiligen Zeile; Aufgaben, die im Tool angelegt wurden, kommen als <b>neue Zeile ans Ende</b> der Liste. ' +
+        intro: '<p class="small muted">Geändert werden nur die Zellen WV, Termin, nächster Schritt, SB, Prio, Material und Besonderheiten der jeweiligen Zeile; Aufgaben, die im Tool angelegt wurden, kommen als <b>neue Zeile ans Ende</b> der Liste. ' +
           'Formatierung, ausgeblendete Zeilen und andere Blätter bleiben unverändert. <b>Die Excel-Datei muss dafür geschlossen sein.</b> Nicht angehakte neue Aufgaben werden künftig nicht mehr angeboten.</p>' +
           (D.DATEI_API ? '' : '<p class="small rot-t">Dieser Browser kann nicht direkt in Dateien schreiben – bitte Edge oder Chrome verwenden. Hier bekommst du nur eine aktualisierte Kopie zum Speichern.</p>') });
       if (!v) return;

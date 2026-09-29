@@ -1309,7 +1309,8 @@
       const wvText = wvRoh instanceof Date ? '' : zellTextIH(wvRoh).replace(/^(WV\s*)?\d{1,2}\.\s*(\d{1,2}\.?|[A-Za-zä]{3,}\.?)(\d{2,4})?\s*/i, '').trim();
       const basis = normName(objektText).slice(0, 30) + '|' + normName(aufgabe).slice(0, 40);
       zaehler[basis] = (zaehler[basis] || 0) + 1;
-      out.push({ key: basis + (zaehler[basis] > 1 ? '#' + zaehler[basis] : ''), zeile: zeilen ? zeilen[i] : i + 1, spalten: { objekt: map.objekt, aufgabe: map.aufgabe, wv: map.wv, schritt: map.schritt, sb: map.sb, termin: map.termin, prio: map.prio }, objektText, sb: zellTextIH(g('sb')), aufgabe,
+      out.push({ key: basis + (zaehler[basis] > 1 ? '#' + zaehler[basis] : ''), zeile: zeilen ? zeilen[i] : i + 1, spalten: { objekt: map.objekt, aufgabe: map.aufgabe, wv: map.wv, schritt: map.schritt, sb: map.sb, termin: map.termin, prio: map.prio, material: map.material, besonderheiten: map.besonderheiten, mieter: map.mieter },
+        roh: { sb: zellTextIH(g('sb')), prio: zellTextIH(g('prio')), mieter: zellTextIH(g('mieter')), material: zellTextIH(g('material')), besonderheiten: zellTextIH(g('besonderheiten')) }, objektText, sb: zellTextIH(g('sb')), aufgabe,
         titel: aufgabe.split('\n')[0].replace(/\s*\/\/.*$/, '').slice(0, 90) || objektText, material: zellTextIH(g('material')), termin: parseTermin(g('termin'), stand),
         prio, mieterInfo, schritt, wv: wvDatum, wvText, besonderheiten: zellTextIH(g('besonderheiten')) });
     });
@@ -1353,7 +1354,8 @@
       const ob = objektFinden(data, e.objektText);
       const felder = { objektText: e.objektText, sb: e.sb, prio: e.prio, material: e.material, naechsterSchritt: e.schritt, besonderheiten: e.besonderheiten, mieterInfo: e.mieterInfo,
         termin: e.termin.datum || '', terminText: e.termin.text, wvText: e.wvText, beschreibung: e.aufgabe, titel: e.titel, listenZeile: e.zeile,
-        listenBlatt: o.blatt || '', listenSpalten: e.spalten || null, listeWVDatum: e.wv || '', listeSchritt: e.schritt || '', listeTerminDatum: e.termin.datum || '' };
+        listenBlatt: o.blatt || '', listenSpalten: e.spalten || null, listeWVDatum: e.wv || '', listeSchritt: e.schritt || '', listeTerminDatum: e.termin.datum || '',
+        listeWerte: { sb: e.sb || '', prio: e.prio || '', material: e.material || '', besonderheiten: e.besonderheiten || '' }, listeRoh: Object.assign({}, e.roh || {}) };
       let f = data.ih.find(x => x.listenKey === e.key);
       if (!f) {
         f = Object.assign({ id: uid(), objektId: ob ? ob.id : '', mieterId: '', gemeldetAm: stand, dringlichkeit: /^(A\+|AAA|AA)$/.test(e.prio) ? 'hoch' : 'normal',
@@ -1498,6 +1500,14 @@
    *  – bestehende Zeilen: WV (früheste offene, ohne Termin-WV), Termin (Termin-WV bzw. Termin-Feld), nächster Schritt
    *  – im Tool angelegte Aufgaben: neue Zeile (neu: true)
    */
+  /** Textspalten, die aus dem Tool in die Liste zurückgeschrieben werden: [Feld, Spalte, Bezeichnung] */
+  const LISTEN_TEXTE = [['sb', 'sb', 'SB'], ['prio', 'prio', 'Prio'], ['material', 'material', 'Material'], ['besonderheiten', 'besonderheiten', 'Besonderheiten']];
+  /** Prio: eigene Spalte, sonst (wie in der Aachener Liste) die Spalte „Mieter + Tel“ – aber nur, wenn dort nichts anderes als eine Prio steht */
+  function prioSpalte(sp, roh, col) {
+    if (col !== 'prio' || sp.prio != null) return col;
+    const m = String((roh || {}).mieter || '').trim();
+    return sp.mieter != null && (!m || PRIO_RE.test(m)) ? 'mieter' : null;
+  }
   function excelAenderungen(data) {
     const vorlage = listenVorlage(data); const out = [];
     data.ih.forEach(f => {
@@ -1507,16 +1517,18 @@
       if (f.quelle === 'ih-liste' && f.listenSpalten) {
         const sp = f.listenSpalten, basis = f.listeWVBasis || f.listeWVDatum || '';
         const tSoll = tw ? tw.datum : (f.termin || '');
-        const a = { f, wv: wv && wv.datum !== basis && wv.datum !== (f.listeWVDatum || '') && sp.wv != null ? wv.datum : null,
+        const texte = f.listeWerte ? LISTEN_TEXTE.map(([k, col, label]) => [k, prioSpalte(sp, f.listeRoh, col), label]).filter(([k, col]) => col && sp[col] != null && (f[k] || '') !== (f.listeWerte[k] || ''))
+          .map(([k, col, label]) => ({ k, col, label, wert: f[k] || '' })) : [];
+        const a = { f, texte, wv: wv && wv.datum !== basis && wv.datum !== (f.listeWVDatum || '') && sp.wv != null ? wv.datum : null,
           schritt: (f.naechsterSchritt || '') !== (f.listeSchritt || '') && sp.schritt != null ? (f.naechsterSchritt || '') : null,
           termin: tSoll && sp.termin != null && tSoll !== (f.listeTerminDatum || '') && tSoll !== (f.listeTerminBasis || '') ? tSoll : null };
-        if (a.wv || a.schritt != null || a.termin) out.push(a);
+        if (a.wv || a.schritt != null || a.termin || texte.length) out.push(a);
       } else if (f.quelle !== 'ih-liste' && vorlage) {
         const o = data.objekte.find(x => x.id === f.objektId);
         const objekt = [o ? o.bezeichnung : '', f.objektText && (!o || normName(f.objektText) !== normName(o.bezeichnung)) ? f.objektText : ''].filter(Boolean).join(', ');
         const m = data.mieter.find(x => x.id === f.mieterId);
         out.push({ f, neu: true, blatt: vorlage.blatt, spalten: vorlage.spalten, werte: { objekt: objekt || '–', sb: f.sb || '', aufgabe: f.beschreibung && f.beschreibung !== f.titel ? f.titel + '\n' + f.beschreibung : f.titel,
-          schritt: f.naechsterSchritt || '', wv: wv ? wv.datum : '', termin: tw ? tw.datum : (f.termin || ''), prio: f.prio || '', mieter: m ? mieterName(m) + (m.tel ? ' ' + m.tel : '') : '' } });
+          schritt: f.naechsterSchritt || '', wv: wv ? wv.datum : '', termin: tw ? tw.datum : (f.termin || ''), prio: f.prio || '', material: f.material || '', besonderheiten: f.besonderheiten || '', mieter: m ? mieterName(m) + (m.tel ? ' ' + m.tel : '') : '' } });
       }
     });
     return out;
@@ -1536,7 +1548,8 @@
     const text = (col, t) => { if (col == null || !t) return; zellen.push([col, '<c r="' + spalteBuchstabe(col) + nr + '"' + (stilVon[col] ? ' s="' + stilVon[col] + '"' : '') + ' t="inlineStr"><is><t xml:space="preserve">' + xmlEncode(t) + '</t></is></c>']); };
     const datum = (col, iso) => { if (col == null || !iso) return; const st = stilAlsDatum(ctx, stilVon[col], datumsStil(sheet, ctx.styles, spalteBuchstabe(col))); if (!st) return text(col, fmtDatum(iso)); zellen.push([col, '<c r="' + spalteBuchstabe(col) + nr + '" s="' + st + '"><v>' + datumSerial(iso) + '</v></c>']); };
     text(sp.objekt, w.objekt); text(sp.sb, w.sb); text(sp.aufgabe, w.aufgabe); datum(sp.termin, w.termin); text(sp.schritt, w.schritt); datum(sp.wv, w.wv);
-    if (sp.prio != null) text(sp.prio, w.prio);
+    if (sp.prio != null) text(sp.prio, w.prio); else if (!w.mieter) text(sp.mieter, w.prio); // ohne Prio-Spalte steht die Prio bei „Mieter + Tel“
+    text(sp.material, w.material); text(sp.besonderheiten, w.besonderheiten);
     const zeile = '<row r="' + nr + '">' + zellen.sort((a, b) => a[0] - b[0]).map(z => z[1]).join('') + '</row>';
     sheet = /<\/sheetData>/.test(sheet) ? sheet.replace('</sheetData>', () => zeile + '</sheetData>') : sheet.replace(/<sheetData\s*\/>/, () => '<sheetData>' + zeile + '</sheetData>');
     sheet = sheet.replace(/(<dimension ref="[A-Z]+\d+:[A-Z]+)(\d+)("\s*\/>)/, (m, a, n, b) => a + Math.max(+n, nr) + b);
@@ -1570,6 +1583,10 @@
       if (a.schritt != null && String(z[sp.schritt] || '').replace(/\s+/g, ' ').trim() !== String(a.f.listeSchritt || '').replace(/\s+/g, ' ').trim()) {
         konflikt.push(Object.assign(a, { zeile: nr, feld: 'nächster Schritt', inExcel: z[sp.schritt] || '' })); return;
       }
+      const glatt = v => String(v == null ? '' : v).replace(/\s+/g, ' ').trim();
+      const tk = (a.texte || []).find(t => glatt(z[sp[t.col]]) !== glatt((a.f.listeRoh || {})[t.col]) && glatt(z[sp[t.col]]) !== glatt(t.wert));
+      if (tk) { konflikt.push(Object.assign(a, { zeile: nr, feld: tk.label, inExcel: z[sp[tk.col]] || '' })); return; }
+      (a.texte || []).forEach(t => { sheet = zelleSetzen(sheet, spalteBuchstabe(sp[t.col]) + nr, { text: t.wert }) || sheet; });
       if (a.wv) {
         const col = spalteBuchstabe(sp.wv);
         // Zusatz wie „Alimi“ oder „anrufen“ bleibt erhalten → als Text „05.10.2026 Alimi“, sonst echtes Excel-Datum
@@ -1590,12 +1607,14 @@
       const f = a.f;
       if (a.neu) {
         Object.assign(f, { quelle: 'ih-liste', listenKey: ihListenSchluessel(a.werte.objekt, a.werte.aufgabe), listenZeile: a.zeile, listenBlatt: a.blatt, listenSpalten: a.spalten,
-          objektText: a.werte.objekt, beschreibung: a.werte.aufgabe, listeWVDatum: a.werte.wv, listeWVBasis: a.werte.wv, listeSchritt: a.werte.schritt, listeTerminDatum: a.werte.termin, listeTerminBasis: a.werte.termin });
+          objektText: a.werte.objekt, beschreibung: a.werte.aufgabe,
+          listeWerte: { sb: a.werte.sb, prio: a.werte.prio, material: a.werte.material, besonderheiten: a.werte.besonderheiten }, listeRoh: { sb: a.werte.sb, prio: a.werte.prio, material: a.werte.material, besonderheiten: a.werte.besonderheiten, mieter: a.spalten.prio == null && !a.werte.mieter ? a.werte.prio : '' }, listeWVDatum: a.werte.wv, listeWVBasis: a.werte.wv, listeSchritt: a.werte.schritt, listeTerminDatum: a.werte.termin, listeTerminBasis: a.werte.termin });
         return;
       }
       if (a.wv) { f.listeWVDatum = a.wv; f.listeWVBasis = a.wv; }
       if (a.termin) { f.listeTerminDatum = a.termin; f.listeTerminBasis = a.termin; f.termin = a.termin; }
       if (a.schritt != null) f.listeSchritt = a.schritt;
+      (a.texte || []).forEach(t => { f.listeWerte[t.k] = t.wert; f.listeRoh = f.listeRoh || {}; f.listeRoh[t.col] = t.wert; });
       f.listenZeile = a.zeile;
     });
   }
