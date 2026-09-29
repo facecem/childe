@@ -10,7 +10,9 @@ const OUT = path.join(__dirname, 'dist', 'Verwaltungs-Assistent.html');
 const JS = ['core.js', 'docs.js', 'ui.js', 'opos.js', 'ih.js', 'kaution.js', 'demo.js'];
 
 const read = f => fs.readFileSync(path.join(SRC, f), 'utf8');
-const js = JS.map(f => '/* ===== ' + f + ' ===== */\n' + read(f)).join('\n')
+const jetzt = new Date(); const pad = n => String(n).padStart(2, '0');
+const VERSION = jetzt.getFullYear() + '-' + pad(jetzt.getMonth() + 1) + '-' + pad(jetzt.getDate()) + ' ' + pad(jetzt.getHours()) + ':' + pad(jetzt.getMinutes());
+const js = "window.APP_VERSION = '" + VERSION + "';\n" + JS.map(f => '/* ===== ' + f + ' ===== */\n' + read(f)).join('\n')
   .replace(/<\/script/gi, '<\\/script');
 const html = read('index.html')
   .replace('/*@@CSS@@*/', () => read('style.css'))

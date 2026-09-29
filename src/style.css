@@ -156,3 +156,4 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
 .banner.flag{background:#fff1f0;border:1px solid #f3b9b3} .flagicon{color:var(--rot);font-weight:700}
 .kachel.flag{border-color:#f3b9b3;background:#fff1f0} .kachel.flag b{color:var(--rot)}
 .schrittzeile{margin:0 0 12px;padding:8px 12px;background:var(--card);border:1px solid var(--line);border-left:4px solid var(--pri);border-radius:var(--r)}
+.excelstatus{padding:7px 12px;margin:0 0 10px;border-radius:var(--r);background:var(--line2);font-size:.92em} .excelstatus.rot{background:var(--rot-soft)} .excelstatus.gelb{background:var(--gelb-soft)}

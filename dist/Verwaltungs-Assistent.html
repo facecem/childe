@@ -163,6 +163,7 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
 .banner.flag{background:#fff1f0;border:1px solid #f3b9b3} .flagicon{color:var(--rot);font-weight:700}
 .kachel.flag{border-color:#f3b9b3;background:#fff1f0} .kachel.flag b{color:var(--rot)}
 .schrittzeile{margin:0 0 12px;padding:8px 12px;background:var(--card);border:1px solid var(--line);border-left:4px solid var(--pri);border-radius:var(--r)}
+.excelstatus{padding:7px 12px;margin:0 0 10px;border-radius:var(--r);background:var(--line2);font-size:.92em} .excelstatus.rot{background:var(--rot-soft)} .excelstatus.gelb{background:var(--gelb-soft)}
 
 </style>
 </head>
@@ -177,6 +178,7 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
 <div id="toasts" aria-live="polite"></div>
 <noscript><p style="padding:20px">Bitte JavaScript aktivieren.</p></noscript>
 <script>
+window.APP_VERSION = '2026-09-29 07:48';
 /* ===== core.js ===== */
 /* ============================================================
  * core – Datum/Werktag/Feiertage, Formatierung, Datenmodell,
@@ -2577,7 +2579,7 @@ Mit freundlichen Grüßen
     try { localStorage.setItem(C.STORE_KEY, JSON.stringify(App.data)); return true; }
     catch (e) { toast('Speichern fehlgeschlagen (Browser-Speicher voll?). Bitte Backup exportieren und ggf. Fotos löschen.', 'err', 10000); return false; }
   };
-  App.commit = function () { App.save(); App.render(); };
+  App.commit = function () { App.save(); App.render(); if (App.excelAuto) App.excelAuto(); };
 
   /* ---------- Toast ---------- */
   function toast(msg, type = 'ok', ms = 4500) {
@@ -3443,7 +3445,7 @@ Mit freundlichen Grüßen
     catch (e) { console.error(e); main.innerHTML = '<div class="banner err">Anzeigefehler: ' + esc(e.message) + ' <button data-act="back">Zurück</button></div>'; }
     if (v.after) v.after();
     if (fid && fid !== 'suche') { const el = document.getElementById(fid); if (el && el !== document.activeElement) { el.focus(); try { if (sel != null) el.selectionStart = el.selectionEnd = sel; } catch (e) { /* */ } } }
-    $('#firmaKopf').textContent = App.data.settings.firma;
+    $('#firmaKopf').textContent = App.data.settings.firma + (root.APP_VERSION ? ' · Version ' + root.APP_VERSION : '');
   };
 
   /* ---------- Events ---------- */
@@ -4041,6 +4043,96 @@ Mit freundlichen Grüßen
     return '<button data-act="ihExcelSchreiben" class="' + (n ? 'primary' : '') + '" title="WV und nächste Schritte aus dem Tool in die Instandhaltungsliste (Excel) schreiben">⇄ In Excel eintragen' + (n ? ' (' + n + ')' : '') + '</button>';
   }
   App.ihExcelKnopf = excelKnopf;
+
+  /** Kern: Änderungen in die Datei schreiben, prüfen, Stand merken → { res, alt, blob, pruef } oder { fehler } */
+  async function excelSchreiben(aend, h, datei) {
+    const gruppen = {}; aend.forEach(a => { const bl = a.neu ? a.blatt : (a.f.listenBlatt || ''); (gruppen[bl] = gruppen[bl] || []).push(a); });
+    const res = { ok: [], fehlt: [], konflikt: [] }; let alt = null, blob = null, pruef = null;
+    try {
+      for (const blatt of Object.keys(gruppen)) {
+        const r2 = await D.excelZellenAendern(blob ? new File([blob], datei.name) : datei, blatt, gruppen[blatt]);
+        if (!alt) alt = r2.alt; if (r2.blob) blob = r2.blob;
+        res.ok.push(...r2.ok); res.fehlt.push(...r2.fehlt); res.konflikt.push(...r2.konflikt);
+      }
+      if (blob) {
+        if (h && D.DATEI_API) { await D.dateiSchreiben(h, blob); pruef = await D.excelPruefen(await h.getFile(), res.ok); }
+        else D.download(blob, datei.name);
+      }
+    } catch (e) {
+      const gesperrt = /NoModificationAllowed|InvalidState|NotReadable|InvalidModification/.test(e.name) || /lock|gesperrt|in use|being used/i.test(e.message);
+      const fehler = gesperrt ? 'Die Excel-Datei ist gerade geöffnet oder gesperrt – bitte Excel schließen. Nichts wurde geändert.' : 'Nicht in Excel gespeichert: ' + e.message;
+      App.data.meta.ihExcelStatus = { zeit: new Date().toISOString(), ok: false, text: fehler, gesperrt };
+      App.save();
+      return { fehler, gesperrt };
+    }
+    C.excelGeschrieben(res.ok);
+    res.ok.forEach(a => C.addVerlauf(App.data, 'ih', a.f.id, 'excel', (a.neu ? 'Als neue Zeile ' + a.zeile + ' in die Instandhaltungsliste eingetragen' : 'In Instandhaltungsliste eingetragen (Zeile ' + a.zeile + ')') +
+      ': ' + [a.wv || (a.neu && a.werte.wv) ? 'WV ' + fmtDatum(a.wv || a.werte.wv) : '', a.termin ? 'Termin ' + fmtDatum(a.termin) : '', a.schritt != null && !a.neu ? 'nächster Schritt „' + a.schritt + '“' : ''].filter(Boolean).join(', ')));
+    App.data.meta.ihExcelGeschrieben = new Date().toISOString();
+    App.data.meta.ihExcelStatus = { zeit: new Date().toISOString(), ok: !pruef || pruef.ok, text: (res.ok.length ? res.ok.length + ' eingetragen' : 'nichts eingetragen') + (res.konflikt.length ? ', ' + res.konflikt.length + ' Konflikt(e)' : '') + (res.fehlt.length ? ', ' + res.fehlt.length + ' nicht gefunden' : '') + (pruef && !pruef.ok ? ' – Kontrolle fehlgeschlagen' : ''), zeilen: pruef ? pruef.zeilen : [] };
+    App.save();
+    return { res, alt, blob, pruef };
+  }
+
+  /* ---------- Automatisch eintragen: nach jeder Änderung, wenn die Datei verbunden ist ---------- */
+  let autoTimer = null, autoLaeuft = false, autoNochmal = false;
+  App.excelAuto = function () {
+    if (!D.DATEI_API || App.ui().excelAuto === false || !C.excelAenderungen(App.data).length) return;
+    clearTimeout(autoTimer); autoTimer = setTimeout(autoLauf, 600);
+  };
+  async function autoLauf() {
+    if (autoLaeuft) { autoNochmal = true; return; }
+    const aend = C.excelAenderungen(App.data).filter(a => !a.neu); // neue Zeilen nur nach Bestätigung
+    if (!aend.length) return;
+    const h = await D.handleLaden('ihListe'); if (!h) return;
+    autoLaeuft = true;
+    try {
+      let erlaubt = (await h.queryPermission({ mode: 'readwrite' })) === 'granted';
+      if (!erlaubt) { try { erlaubt = (await h.requestPermission({ mode: 'readwrite' })) === 'granted'; } catch (e) { erlaubt = false; } }
+      if (!erlaubt) { App.data.meta.ihExcelStatus = { zeit: new Date().toISOString(), ok: false, text: 'Browser hat den Schreibzugriff noch nicht erlaubt – einmal „⇄ In Excel eintragen“ klicken.' }; App.save(); App.render(); return; }
+      const r = await excelSchreiben(aend, h, await h.getFile());
+      if (r.fehler) App.toast('Excel: ' + r.fehler + (r.gesperrt ? ' Die Änderung wird eingetragen, sobald die Datei geschlossen ist.' : ''), 'warn', 9000);
+      else if (r.res.ok.length) App.toast('✓ In Excel eingetragen: ' + r.res.ok.map(a => 'Zeile ' + a.zeile + (a.wv ? ' WV ' + fmtDatum(a.wv) : '') + (a.termin ? ' Termin ' + fmtDatum(a.termin) : '')).join(', ') + (r.pruef && r.pruef.ok ? ' (geprüft)' : ''), r.pruef && !r.pruef.ok ? 'warn' : 'ok', 6000);
+      if (r.res && (r.res.konflikt.length || r.res.fehlt.length)) App.toast('Excel: ' + [r.res.konflikt.length ? r.res.konflikt.length + '× in Excel inzwischen von Hand geändert (nicht überschrieben)' : '', r.res.fehlt.length ? r.res.fehlt.length + '× Zeile nicht gefunden' : ''].filter(Boolean).join(', ') + ' – Liste neu einlesen.', 'warn', 9000);
+      App.render();
+    } finally {
+      autoLaeuft = false;
+      if (autoNochmal) { autoNochmal = false; App.excelAuto(); }
+    }
+  }
+  // gesperrte Datei: regelmäßig erneut versuchen
+  setInterval(() => { const st = App.data && App.data.meta.ihExcelStatus; if (st && st.gesperrt) App.excelAuto(); }, 60000);
+
+  /** Statuszeile Excel-Verbindung (Instandhaltung) */
+  App.excelStatusHTML = function () {
+    if (!App.data.ih.some(x => x.quelle === 'ih-liste')) return '';
+    const n = C.excelAenderungen(App.data).length, st = App.data.meta.ihExcelStatus;
+    const zeit = st ? new Date(st.zeit).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+    return '<div class="excelstatus ' + (!D.DATEI_API ? 'rot' : st && !st.ok ? 'gelb' : '') + '">' +
+      (!D.DATEI_API ? '⚠ <b>Dieser Browser kann nicht direkt in die Excel schreiben.</b> Bitte die Datei in <b>Edge oder Chrome</b> öffnen.'
+        : '📄 Excel: <b id="excelName">…</b> · ' + (App.ui().excelAuto === false ? 'manuell' : '<b>automatisch</b>') + (n ? ' · <span class="rot-t">' + n + ' noch nicht eingetragen</span>' : ' · <span class="gruen-t">alles eingetragen</span>') +
+          (st ? ' · zuletzt ' + zeit + ': ' + (st.ok ? '✓ ' : '✗ ') + esc(st.text) : '')) +
+      ' <button class="s" data-act="ihExcelDetails">Details</button></div>';
+  };
+  App.act.ihExcelDetails = async function () {
+    const h = D.DATEI_API ? await D.handleLaden('ihListe') : null;
+    let recht = '–'; try { if (h) recht = await h.queryPermission({ mode: 'readwrite' }); } catch (e) { recht = 'unbekannt'; }
+    const aend = C.excelAenderungen(App.data), st = App.data.meta.ihExcelStatus;
+    const rechtText = { granted: '✓ erlaubt', prompt: 'wird beim nächsten Eintragen abgefragt', denied: '✗ verweigert' }[recht] || recht;
+    const r = await App.modal({ title: 'Excel-Verbindung', wide: true, body: '<dl class="kv">' +
+      '<dt>Version</dt><dd>' + esc(root.APP_VERSION || '–') + '</dd>' +
+      '<dt>Browser</dt><dd>' + (D.DATEI_API ? '✓ kann direkt in Dateien schreiben' : '<span class="rot-t">✗ kann nicht direkt schreiben – Edge oder Chrome verwenden</span>') + '</dd>' +
+      '<dt>Verbundene Datei</dt><dd>' + (h ? esc(h.name) : '<span class="rot-t">keine – Liste über „⇪ Instandhaltungsliste einlesen“ auswählen</span>') + '</dd>' +
+      '<dt>Schreibrecht</dt><dd>' + rechtText + '</dd>' +
+      '<dt>Automatisch eintragen</dt><dd>' + (App.ui().excelAuto === false ? 'aus' : 'an – nach jeder WV-/Termin-/Schritt-Änderung') + '</dd>' +
+      '<dt>Zuletzt</dt><dd>' + (st ? new Date(st.zeit).toLocaleString('de-DE') + ' – ' + (st.ok ? '✓ ' : '✗ ') + esc(st.text) + (st.zeilen && st.zeilen.length ? '<ul class="small">' + st.zeilen.map(z => '<li>' + esc(z) + '</li>').join('') + '</ul>' : '') : '–') + '</dd>' +
+      '<dt>Noch offen</dt><dd>' + (aend.length ? '<ul class="small">' + aend.map(a => '<li>' + esc(a.neu ? 'neue Zeile: ' + a.f.titel : 'Zeile ' + a.f.listenZeile + ' – ' + a.f.titel) + (a.wv || (a.neu && a.werte.wv) ? ' · WV ' + fmtDatum(a.wv || a.werte.wv) : '') + (a.termin ? ' · Termin ' + fmtDatum(a.termin) : '') + (a.schritt != null && !a.neu ? ' · Schritt' : '') + '</li>').join('') + '</ul>' : 'nichts') + '</dd></dl>' +
+      '<p class="small muted">Nur WV von <b>Instandhaltungs-Aufgaben</b> gehören in die Liste (nicht OPOS/Kaution). Eingetragen wird die nächste WV, der Termin und der nächste Schritt.</p>',
+      buttons: [{ label: 'Schließen', value: '' }, { label: App.ui().excelAuto === false ? 'Automatik einschalten' : 'Automatik ausschalten', value: 'auto', type: 'submit' }, ...(D.DATEI_API ? [{ label: 'Andere Datei verbinden', value: 'neu' }] : []), ...(aend.length ? [{ label: '⇄ Jetzt eintragen', value: 'jetzt', cls: 'primary' }] : [])] });
+    if (r.action === 'auto') { App.ui().excelAuto = App.ui().excelAuto === false; App.commit(); }
+    if (r.action === 'neu') { try { await D.excelWaehlen('ihListe'); App.toast('Datei verbunden. Bitte Liste einmal neu einlesen, damit die Zeilen passen.', 'ok', 8000); } catch (e) { /* abgebrochen */ } App.render(); }
+    if (r.action === 'jetzt') App.act.ihExcelSchreiben();
+  };
   function gefiltert() {
     const f = App.f.ih, q = f.q.toLowerCase();
     const prioRang = x => ({ 'A+': 0, AAA: 0, AA: 1, A: 2, B: 3, C: 4 }[x.prio] ?? ({ notfall: 0, hoch: 1, normal: 5 }[x.dringlichkeit]));
@@ -4060,7 +4152,7 @@ Mit freundlichen Grüßen
         REIHE.map(s => '<option value="' + s + '"' + (f.status === s ? ' selected' : '') + '>' + ST[s] + '</option>').join('') + '</select>' +
         '<span class="muted">' + list.length + ' Aufgaben</span><span class="sp"></span>' + (App.data.meta.ihListeStand ? '<small class="muted">Liste eingelesen ' + fmtDatum(App.data.meta.ihListeStand) + '</small>' : '') +
         '<button data-act="ihListeImport">⇪ Instandhaltungsliste einlesen</button>' + excelKnopf() + '<button data-act="ihExcel">Liste Excel</button><button data-act="ihPng">PNG</button><button class="primary" data-act="ihNeu">+ Aufgabe / Schaden</button></div>' +
-        (list.length ? tabelle(list) : H.leer('Keine Aufgaben für diesen Filter. Die bestehende Excel-Liste lässt sich über „⇪ Instandhaltungsliste einlesen“ übernehmen.')) + '</section>';
+        App.excelStatusHTML() + (list.length ? tabelle(list) : H.leer('Keine Aufgaben für diesen Filter. Die bestehende Excel-Liste lässt sich über „⇪ Instandhaltungsliste einlesen“ übernehmen.')) + '</section>';
     },
     detail(id) {
       const x = H.fall('ih', id); if (!x) { App.detail = null; return App.views.ih.render(); }
@@ -4103,6 +4195,7 @@ Mit freundlichen Grüßen
         '<section class="card"><h3>Verlauf</h3>' + App.verlaufListe('ih', id) + '</section></div>';
     },
     after() {
+      const en = document.getElementById('excelName'); if (en) D.handleLaden('ihListe').then(h => { en.textContent = h ? h.name : 'nicht verbunden'; if (!h) en.classList.add('rot-t'); });
       const z = document.querySelector('[data-drop]'); if (!z) return;
       z.ondragover = e => { e.preventDefault(); z.classList.add('over'); };
       z.ondragleave = () => z.classList.remove('over');
@@ -4199,26 +4292,9 @@ Mit freundlichen Grüßen
         }
       } catch (e) { if (e.name === 'AbortError') return; return App.toast('Datei konnte nicht geöffnet werden: ' + e.message, 'err', 9000); }
       const vorher = aend.map(a => ({ f: a.f, snap: JSON.stringify(a.f) }));
-      const gruppen = {}; aend.forEach(a => { const bl = a.neu ? a.blatt : (a.f.listenBlatt || ''); (gruppen[bl] = gruppen[bl] || []).push(a); });
-      let res = { ok: [], fehlt: [], konflikt: [] }, alt = null, blob = null, pruef = null;
-      try {
-        for (const blatt of Object.keys(gruppen)) {
-          const r2 = await D.excelZellenAendern(blob ? new File([blob], datei.name) : datei, blatt, gruppen[blatt]);
-          if (!alt) alt = r2.alt; if (r2.blob) blob = r2.blob;
-          res.ok.push(...r2.ok); res.fehlt.push(...r2.fehlt); res.konflikt.push(...r2.konflikt);
-        }
-        if (blob) {
-          if (D.DATEI_API) { await D.dateiSchreiben(h, blob); pruef = await D.excelPruefen(await h.getFile(), res.ok); }
-          else D.download(blob, datei.name);
-        }
-      } catch (e) {
-        const gesperrt = /NoModificationAllowed|InvalidState|NotReadable|InvalidModification/.test(e.name) || /lock|gesperrt|in use/i.test(e.message);
-        return App.toast(gesperrt ? 'Die Datei ist gerade geöffnet (Excel?) oder gesperrt. Bitte Excel schließen und erneut versuchen. Nichts wurde geändert.' : 'Nicht gespeichert: ' + e.message, 'err', 12000);
-      }
-      C.excelGeschrieben(res.ok);
-      res.ok.forEach(a => C.addVerlauf(App.data, 'ih', a.f.id, 'excel', (a.neu ? 'Als neue Zeile ' + a.zeile + ' in die Instandhaltungsliste eingetragen' : 'In Instandhaltungsliste eingetragen (Zeile ' + a.zeile + ')') +
-        ': ' + [a.wv || (a.neu && a.werte.wv) ? 'WV ' + fmtDatum(a.wv || a.werte.wv) : '', a.termin ? 'Termin ' + fmtDatum(a.termin) : '', a.schritt != null && !a.neu ? 'nächster Schritt „' + a.schritt + '“' : ''].filter(Boolean).join(', ')));
-      App.data.meta.ihExcelGeschrieben = new Date().toISOString();
+      const r = await excelSchreiben(aend, h, datei);
+      if (r.fehler) return App.toast(r.fehler, 'err', 12000);
+      const { res, alt, blob, pruef } = r;
       App.commit();
       const hilfe = '<details class="small"><summary>Excel zeigt oben „Geschützte Ansicht – Dateien aus dem Internet …“?</summary>' +
         '<p>Windows markiert jede Datei, die ein Browser speichert, als „aus dem Internet“ – deshalb öffnet Excel sie geschützt. Einmalig abstellen, indem du den Ordner der Liste als vertrauenswürdig einträgst:</p>' +

@@ -50,7 +50,7 @@
     try { localStorage.setItem(C.STORE_KEY, JSON.stringify(App.data)); return true; }
     catch (e) { toast('Speichern fehlgeschlagen (Browser-Speicher voll?). Bitte Backup exportieren und ggf. Fotos löschen.', 'err', 10000); return false; }
   };
-  App.commit = function () { App.save(); App.render(); };
+  App.commit = function () { App.save(); App.render(); if (App.excelAuto) App.excelAuto(); };
 
   /* ---------- Toast ---------- */
   function toast(msg, type = 'ok', ms = 4500) {
@@ -916,7 +916,7 @@
     catch (e) { console.error(e); main.innerHTML = '<div class="banner err">Anzeigefehler: ' + esc(e.message) + ' <button data-act="back">Zurück</button></div>'; }
     if (v.after) v.after();
     if (fid && fid !== 'suche') { const el = document.getElementById(fid); if (el && el !== document.activeElement) { el.focus(); try { if (sel != null) el.selectionStart = el.selectionEnd = sel; } catch (e) { /* */ } } }
-    $('#firmaKopf').textContent = App.data.settings.firma;
+    $('#firmaKopf').textContent = App.data.settings.firma + (root.APP_VERSION ? ' · Version ' + root.APP_VERSION : '');
   };
 
   /* ---------- Events ---------- */
