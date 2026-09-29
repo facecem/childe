@@ -160,16 +160,25 @@
       App.commit();
     },
     async ihExcelSchreiben() {
-      const aend = C.excelAenderungen(App.data);
+      let aend = C.excelAenderungen(App.data);
       if (!aend.length) return App.toast('Keine offenen Änderungen – die Excel ist auf dem Stand des Tools.');
       let h = D.DATEI_API ? await D.handleLaden('ihListe') : null;
-      const zeilen = aend.map(a => '<tr><td>' + esc(objektName(a.f)) + '</td><td>' + esc(a.f.titel) + '</td><td class="nw">' + (a.wv ? fmtDatum(a.f.listeWVDatum) + ' → <b>' + fmtDatum(a.wv) + '</b>' : '') + '</td><td>' + (a.schritt != null ? '<b>' + esc(a.schritt || '(leer)') + '</b>' : '') + '</td></tr>').join('');
-      const r = await App.modal({ title: '⇄ In die Instandhaltungsliste eintragen', wide: true,
-        body: '<p>' + aend.length + ' Aufgabe(n) mit geänderter WV bzw. nächstem Schritt' + (h ? ' → <b>' + esc(h.name) + '</b>' : '') + ':</p><div class="scrollx"><table class="tbl small"><thead><tr><th>Objekt</th><th>Aufgabe</th><th>WV</th><th>nächster Schritt</th></tr></thead><tbody>' + zeilen + '</tbody></table></div>' +
-          '<p class="small muted">Es werden nur die Zellen „WV“ und „nächster Schritt“ in den jeweiligen Zeilen geändert – Formatierung, ausgeblendete Zeilen und andere Blätter bleiben unverändert. Vorher wird geprüft, ob in der Zeile noch dieselbe Aufgabe steht; wurde die Zelle in Excel inzwischen von Hand geändert, wird sie nicht überschrieben. ' +
-          '<b>Die Excel-Datei muss dafür geschlossen sein.</b></p>' + (D.DATEI_API ? '' : '<p class="small">Dein Browser kann nicht direkt in Dateien schreiben (nur Edge/Chrome). Du wählst die Datei aus und bekommst eine aktualisierte Kopie zum Speichern.</p>'),
-        buttons: [{ label: 'Abbrechen', value: '' }, { label: D.DATEI_API ? (h ? '⇄ In ' + esc(h.name) + ' eintragen' : 'Excel-Datei wählen & eintragen') : 'Datei wählen …', value: 'ok', cls: 'primary' }] });
-      if (r.action !== 'ok') return;
+      const pfeil = (alt, neu) => (alt ? fmtDatum(alt) + ' → ' : '') + '<b>' + fmtDatum(neu) + '</b>';
+      const opts = aend.map((a, i) => [String(i), a.neu
+        ? '<span class="chip gruen">neue Zeile</span> ' + esc(a.werte.objekt) + ' · <b>' + esc(a.f.titel) + '</b>' + (a.werte.wv ? ' · WV ' + fmtDatum(a.werte.wv) : '') + (a.werte.schritt ? ' · → ' + esc(a.werte.schritt) : '')
+        : esc(objektName(a.f)) + ' · <b>' + esc(a.f.titel) + '</b> <small class="muted">(Zeile ' + (a.f.listenZeile || '?') + ')</small>' + (a.wv ? ' · WV ' + pfeil(a.f.listeWVDatum, a.wv) : '') +
+          (a.termin ? ' · Termin ' + pfeil(a.f.listeTerminDatum, a.termin) : '') + (a.schritt != null ? ' · nächster Schritt „' + esc(a.schritt || '(leer)') + '“' : '')]);
+      const v = await App.formModal('⇄ In die Instandhaltungsliste eintragen', [
+        { k: 'sel', l: aend.length + ' Änderung(en)' + (h ? ' → ' + h.name : ''), t: 'multi', cls: 'liste', o: opts }
+      ], { sel: opts.map(o => o[0]) }, { wide: true, ok: D.DATEI_API ? (h ? '⇄ In ' + esc(h.name) + ' eintragen' : 'Excel-Datei wählen & eintragen') : 'Datei wählen …',
+        intro: '<p class="small muted">Geändert werden nur die Zellen WV, Termin und nächster Schritt der jeweiligen Zeile; Aufgaben, die im Tool angelegt wurden, kommen als <b>neue Zeile ans Ende</b> der Liste. ' +
+          'Formatierung, ausgeblendete Zeilen und andere Blätter bleiben unverändert. <b>Die Excel-Datei muss dafür geschlossen sein.</b> Nicht angehakte neue Aufgaben werden künftig nicht mehr angeboten.</p>' +
+          (D.DATEI_API ? '' : '<p class="small rot-t">Dieser Browser kann nicht direkt in Dateien schreiben – bitte Edge oder Chrome verwenden. Hier bekommst du nur eine aktualisierte Kopie zum Speichern.</p>') });
+      if (!v) return;
+      const gewaehlt = new Set(v.sel);
+      aend.forEach((a, i) => { if (!gewaehlt.has(String(i)) && a.neu) a.f.nichtInExcel = true; });
+      aend = aend.filter((a, i) => gewaehlt.has(String(i)));
+      if (!aend.length) { App.commit(); return; }
       let datei;
       try {
         if (D.DATEI_API) {
@@ -177,13 +186,13 @@
           if (!await D.zugriff(h, true)) return App.toast('Schreibzugriff auf die Datei wurde nicht erlaubt.', 'warn');
           datei = await h.getFile();
         } else {
-          const v = await App.formModal('Instandhaltungsliste wählen', [{ k: 'datei', l: 'Excel-Datei', t: 'file', accept: '.xlsx,.xlsm', full: true }], {}, { ok: 'Eintragen' });
-          if (!v || !v.datei[0]) return; datei = v.datei[0];
+          const w = await App.formModal('Instandhaltungsliste wählen', [{ k: 'datei', l: 'Excel-Datei', t: 'file', accept: '.xlsx,.xlsm', full: true }], {}, { ok: 'Eintragen' });
+          if (!w || !w.datei[0]) return; datei = w.datei[0];
         }
       } catch (e) { if (e.name === 'AbortError') return; return App.toast('Datei konnte nicht geöffnet werden: ' + e.message, 'err', 9000); }
-      const vorher = aend.map(a => ({ f: a.f, wv: a.f.listeWVDatum, basis: a.f.listeWVBasis, schritt: a.f.listeSchritt, zeile: a.f.listenZeile }));
-      const gruppen = {}; aend.forEach(a => { (gruppen[a.f.listenBlatt || ''] = gruppen[a.f.listenBlatt || ''] || []).push(a); });
-      let res = { ok: [], fehlt: [], konflikt: [] }, alt = null, blob = null;
+      const vorher = aend.map(a => ({ f: a.f, snap: JSON.stringify(a.f) }));
+      const gruppen = {}; aend.forEach(a => { const bl = a.neu ? a.blatt : (a.f.listenBlatt || ''); (gruppen[bl] = gruppen[bl] || []).push(a); });
+      let res = { ok: [], fehlt: [], konflikt: [] }, alt = null, blob = null, pruef = null;
       try {
         for (const blatt of Object.keys(gruppen)) {
           const r2 = await D.excelZellenAendern(blob ? new File([blob], datei.name) : datei, blatt, gruppen[blatt]);
@@ -191,7 +200,7 @@
           res.ok.push(...r2.ok); res.fehlt.push(...r2.fehlt); res.konflikt.push(...r2.konflikt);
         }
         if (blob) {
-          if (D.DATEI_API) await D.dateiSchreiben(h, blob);
+          if (D.DATEI_API) { await D.dateiSchreiben(h, blob); pruef = await D.excelPruefen(await h.getFile(), res.ok); }
           else D.download(blob, datei.name);
         }
       } catch (e) {
@@ -199,17 +208,25 @@
         return App.toast(gesperrt ? 'Die Datei ist gerade geöffnet (Excel?) oder gesperrt. Bitte Excel schließen und erneut versuchen. Nichts wurde geändert.' : 'Nicht gespeichert: ' + e.message, 'err', 12000);
       }
       C.excelGeschrieben(res.ok);
-      res.ok.forEach(a => C.addVerlauf(App.data, 'ih', a.f.id, 'excel', 'In Instandhaltungsliste eingetragen (Zeile ' + a.zeile + '): ' + [a.wv ? 'WV ' + fmtDatum(a.wv) : '', a.schritt != null ? 'nächster Schritt „' + a.schritt + '“' : ''].filter(Boolean).join(', ')));
+      res.ok.forEach(a => C.addVerlauf(App.data, 'ih', a.f.id, 'excel', (a.neu ? 'Als neue Zeile ' + a.zeile + ' in die Instandhaltungsliste eingetragen' : 'In Instandhaltungsliste eingetragen (Zeile ' + a.zeile + ')') +
+        ': ' + [a.wv || (a.neu && a.werte.wv) ? 'WV ' + fmtDatum(a.wv || a.werte.wv) : '', a.termin ? 'Termin ' + fmtDatum(a.termin) : '', a.schritt != null && !a.neu ? 'nächster Schritt „' + a.schritt + '“' : ''].filter(Boolean).join(', ')));
       App.data.meta.ihExcelGeschrieben = new Date().toISOString();
       App.commit();
-      const rr = await App.modal({ title: res.ok.length ? '✓ In Excel eingetragen' : 'Nichts eingetragen', body:
-        '<ul>' + (res.ok.length ? '<li><b>' + res.ok.length + '</b> Aufgabe(n) in ' + esc(datei.name) + (D.DATEI_API ? ' gespeichert' : ' – aktualisierte Datei heruntergeladen, bitte die alte Datei damit ersetzen') + '</li>' : '') +
+      const hilfe = '<details class="small"><summary>Excel zeigt oben „Geschützte Ansicht – Dateien aus dem Internet …“?</summary>' +
+        '<p>Windows markiert jede Datei, die ein Browser speichert, als „aus dem Internet“ – deshalb öffnet Excel sie geschützt. Einmalig abstellen, indem du den Ordner der Liste als vertrauenswürdig einträgst:</p>' +
+        '<ol><li>Excel → <b>Datei → Optionen → Trust Center → Einstellungen für das Trust Center …</b></li><li><b>Vertrauenswürdige Speicherorte</b> → bei Netzlaufwerk zuerst Haken <b>„Vertrauenswürdige Speicherorte in meinem Netzwerk zulassen“</b></li>' +
+        '<li><b>„Neuen Speicherort hinzufügen …“</b> → Ordner der Instandhaltungsliste wählen → Haken <b>„Unterordner … ebenfalls vertrauenswürdig“</b> → OK</li></ol>' +
+        '<p>Danach öffnet Excel die Liste ohne gelbe Leiste. Ist die Option ausgegraut, muss die IT den Ordner freigeben.</p></details>';
+      const rr = await App.modal({ title: res.ok.length ? '✓ In Excel eingetragen' : 'Nichts eingetragen', wide: true, body:
+        (pruef ? '<p class="' + (pruef.ok ? 'gruen-t' : 'rot-t') + '"><b>' + (pruef.ok ? '✓ Kontrolle: Datei neu gelesen – alles steht drin.' : '✗ Kontrolle: nicht alles wiedergefunden – bitte Datei prüfen.') + '</b></p>' +
+          '<ul class="small">' + pruef.zeilen.map(z => '<li>' + esc(z) + '</li>').join('') + '</ul>' : '') +
+        '<ul>' + (res.ok.length ? '<li><b>' + res.ok.length + '</b> Aufgabe(n) in <b>' + esc(datei.name) + '</b>' + (D.DATEI_API ? ' gespeichert' : ' – <span class="rot-t">nur als Kopie heruntergeladen</span>: die Originaldatei ist unverändert! Kopie aus „Downloads“ über das Original kopieren oder Edge/Chrome verwenden.') + '</li>' : '') +
         (res.konflikt.length ? '<li class="rot-t">' + res.konflikt.length + ' nicht überschrieben, weil in Excel inzwischen von Hand geändert: ' + res.konflikt.map(a => esc(a.f.titel) + ' (Zeile ' + a.zeile + ', ' + a.feld + ' in Excel: „' + esc(a.inExcel) + '“)').join('; ') + ' – bitte Liste neu einlesen</li>' : '') +
-        (res.fehlt.length ? '<li class="rot-t">' + res.fehlt.length + ' Aufgabe(n) in der Excel nicht mehr gefunden: ' + res.fehlt.map(a => esc(a.f.titel)).join('; ') + '</li>' : '') + '</ul>',
+        (res.fehlt.length ? '<li class="rot-t">' + res.fehlt.length + ' Aufgabe(n) in der Excel nicht mehr gefunden: ' + res.fehlt.map(a => esc(a.f.titel)).join('; ') + '</li>' : '') + '</ul>' + hilfe,
         buttons: [...(D.DATEI_API && blob ? [{ label: '↶ Rückgängig', value: 'undo', cls: 'del' }] : []), { label: 'OK', value: '' }] });
       if (rr.action === 'undo') {
         try { await D.dateiSchreiben(h, alt); } catch (e) { return App.toast('Rückgängig nicht möglich: ' + e.message, 'err', 9000); }
-        vorher.forEach(x => { x.f.listeWVDatum = x.wv; x.f.listeWVBasis = x.basis; x.f.listeSchritt = x.schritt; x.f.listenZeile = x.zeile; C.addVerlauf(App.data, 'ih', x.f.id, 'excel', 'Eintrag in Excel rückgängig gemacht'); });
+        vorher.forEach(x => { const alt2 = JSON.parse(x.snap); Object.keys(x.f).forEach(k => { if (!(k in alt2)) delete x.f[k]; }); Object.assign(x.f, alt2); C.addVerlauf(App.data, 'ih', x.f.id, 'excel', 'Eintrag in Excel rückgängig gemacht'); });
         App.commit(); App.toast('Excel-Datei wiederhergestellt.');
       }
     },

@@ -708,12 +708,34 @@ Mit freundlichen Grüßen
     const test = X.read(await blob.arrayBuffer(), { type: 'array', cellDates: true });
     const ws = test.Sheets[test.SheetNames.find(n => norm(n) === norm(sh.name)) || test.SheetNames[0]];
     r.ok.forEach(a => {
-      if (a.wv) { const c = ws[C.spalteBuchstabe(a.f.listenSpalten.wv) + a.zeile]; const v = c && (c.v instanceof Date ? C.parseDatum(c.v) : C.parseDatum(String(c.w || c.v))); if (v !== a.wv) throw new Error('Kontrolle fehlgeschlagen (Zeile ' + a.zeile + ') – nichts gespeichert'); }
+      const sp = a.spalten || a.f.listenSpalten; const wv = a.wv || (a.neu && a.werte.wv);
+      if (wv) { const c = ws[C.spalteBuchstabe(sp.wv) + a.zeile]; const v = c && (c.v instanceof Date ? C.parseDatum(c.v) : String(c.w || c.v)); if (!v || !(v === wv || v.includes(fmtDatum(wv)))) throw new Error('Kontrolle fehlgeschlagen (Zeile ' + a.zeile + ') – nichts gespeichert'); }
     });
     return Object.assign(r, { blob, alt });
+  }
+  /** Nach dem Speichern: Datei neu lesen und prüfen, ob die Werte wirklich drinstehen → { ok, zeilen:[text] } */
+  async function excelPruefen(file, ok) {
+    const X = await loadLib('xlsx', 'XLSX');
+    const wb = X.read(await file.arrayBuffer(), { type: 'array', cellDates: true });
+    const norm = s => String(s || '').trim().toLowerCase();
+    let alles = true; const zeilen = [];
+    ok.forEach(a => {
+      const sp = a.spalten || a.f.listenSpalten; const bl = a.blatt || a.f.listenBlatt;
+      const ws = wb.Sheets[wb.SheetNames.find(n => norm(n) === norm(bl)) || wb.SheetNames[0]];
+      const zelle = col => { const c = ws[C.spalteBuchstabe(col) + a.zeile]; return c ? (c.v instanceof Date ? C.parseDatum(c.v) : String(c.w || c.v)) : ''; };
+      const hat = (col, iso) => { const v = zelle(col); return v === iso || v.includes(fmtDatum(iso)) || C.parseDatum(v.split(' ')[0]) === iso; };
+      const teile = [];
+      const wv = a.wv || (a.neu && a.werte.wv), termin = a.termin || (a.neu && a.werte.termin);
+      if (wv) { const t = hat(sp.wv, wv); alles = alles && t; teile.push('WV ' + fmtDatum(wv) + (t ? ' ✓' : ' ✗')); }
+      if (termin) { const t = hat(sp.termin, termin); alles = alles && t; teile.push('Termin ' + fmtDatum(termin) + (t ? ' ✓' : ' ✗')); }
+      if (a.schritt != null && !a.neu) { const t = zelle(sp.schritt).trim() === String(a.schritt).trim(); alles = alles && t; teile.push('nächster Schritt' + (t ? ' ✓' : ' ✗')); }
+      if (a.neu) { const t = zelle(sp.aufgabe).split('\n')[0].trim() === String(a.werte.aufgabe).split('\n')[0].trim(); alles = alles && t; teile.push('neue Zeile' + (t ? ' ✓' : ' ✗')); }
+      zeilen.push('Zeile ' + a.zeile + ' – ' + a.f.titel + ': ' + teile.join(', '));
+    });
+    return { ok: alles, zeilen };
   }
   async function dateiSchreiben(h, daten) { const w = await h.createWritable(); await w.write(daten); await w.close(); }
 
   root.Docs = { STANDARD, PLATZHALTER, BRIEF_CSS, vorlage, kontext, erzeuge, briefHTML, standalone, download, drucken, word, pdf, pdfBlob, emailEntwurf, emailOhneAnhang, excel, leseArbeitsmappe, lesePdfText, png, loadLib, tabelle,
-    DATEI_API, handleLaden, handleSpeichern, excelWaehlen, zugriff, excelZellenAendern, dateiSchreiben };
+    DATEI_API, handleLaden, handleSpeichern, excelWaehlen, zugriff, excelZellenAendern, excelPruefen, dateiSchreiben };
 })(window);

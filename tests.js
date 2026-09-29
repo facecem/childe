@@ -314,6 +314,24 @@ eq([d.opos[0].naechsterSchritt, C.vorgangPruefen(d, 'opos', d.opos[0]).geflaggt]
 const dm = C.normalize({ settings: {}, opos: [{ id: 'z', mieterId: 'm', stufe: 'neu', posten: [] }], wv: [{ id: 'w', bereich: 'opos', refId: 'z', datum: '2026-10-01', aufgabe: 'Mieter anrufen', status: 'offen', erstelltDurch: 'manuell' }], meta: { takt: 2 } });
 eq([dm.opos[0].naechsterSchritt, dm.settings.ui.kacheln[0]], ['Mieter anrufen', 'flag'], 'Umstellung: Schritt aus offener WV, ⚑-Kachel');
 
+section('Excel: Termin und neue Zeilen');
+const sx2 = '<worksheet><dimension ref="A1:K3"/><sheetData><row r="1"><c r="C1" t="s"><v>0</v></c><c r="E1" t="s"><v>1</v></c><c r="J1" t="s"><v>2</v></c></row>' +
+  '<row r="2"><c r="C2" s="5" t="s"><v>3</v></c><c r="D2" s="7" t="inlineStr"><is><t>Cem</t></is></c><c r="E2" s="5" t="s"><v>4</v></c><c r="G2" s="9"><v>46291</v></c><c r="I2" s="6" t="s"><v>5</v></c><c r="J2" s="9"><v>46282</v></c></row><row r="3" hidden="1"/></sheetData></worksheet>';
+const spT = { objekt: 2, sb: 3, aufgabe: 4, termin: 6, schritt: 8, wv: 9 };
+const fT = { listenKey: C.ihListenSchluessel('Musterweg 12', 'Rollos & Motor'), listenZeile: 2, listenSpalten: spT, listeWVDatum: C.parseDatum('46282'), listeSchritt: 'Angebot holen', listeTerminDatum: C.parseDatum('46291') };
+const rT = C.excelBlattAktualisieren(sx2, sstx, stx, [{ f: fT, wv: null, schritt: null, termin: '2026-10-08' }]);
+eq([rT.ok.length, C.zeileLesen(rT.sheet, 2, sstx)[6]], [1, String(C.datumSerial('2026-10-08'))], 'Termin verschoben → Termin-Spalte als Datum');
+const neuW = { objekt: 'Beispielweg 5, Keller', sb: 'Cem', aufgabe: 'Kellertür klemmt', schritt: 'Schreiner anrufen', wv: '2026-10-02', termin: '', prio: '' };
+const rN = C.excelBlattAktualisieren(sx2, sstx, stx, [{ f: {}, neu: true, blatt: 'x', spalten: spT, werte: neuW }]);
+eq([rN.ok[0].zeile, C.zeileLesen(rN.sheet, 4, sstx)], [4, { 2: 'Beispielweg 5, Keller', 3: 'Cem', 4: 'Kellertür klemmt', 8: 'Schreiner anrufen', 9: String(C.datumSerial('2026-10-02')) }], 'neue Zeile am Ende mit allen Werten');
+truthy(rN.sheet.includes('<dimension ref="A1:K4"/>') && /<row r="4"><c r="C4" s="5"/.test(rN.sheet) && rN.sheet.includes('<c r="J4" s="9">'), 'Stile übernommen, Bereich erweitert');
+const dN = C.emptyData(); dN.ih.push({ id: 'l', quelle: 'ih-liste', listenSpalten: spT, listenBlatt: 'TO DO', status: 'gemeldet' }, { id: 'n', titel: 'Kellertür klemmt', objektText: 'Keller', status: 'gemeldet', sb: 'Cem', naechsterSchritt: 'Schreiner anrufen' });
+C.createWV(dN, 'ih', 'n', '2026-10-02', 'Schreiner anrufen', { erstelltDurch: 'manuell' });
+const aN = C.excelAenderungen(dN);
+eq(aN.map(a => [!!a.neu, a.blatt, a.werte && a.werte.wv]), [[true, 'TO DO', '2026-10-02']], 'im Tool angelegte Aufgabe wird als neue Zeile angeboten');
+C.excelGeschrieben([Object.assign(aN[0], { zeile: 377 })]);
+eq([dN.ih[1].quelle, dN.ih[1].listenZeile, C.excelAenderungen(dN).length], ['ih-liste', 377, 0], 'danach Listen-Aufgabe, keine offenen Änderungen');
+
 section('Vorlagen');
 const html = C.vorlageZuHTML('Hallo {{m.name}},\n\n{{postenTabelle}}\n\nSumme **{{s}}** <x>\nZeile {{fehlt}}', { m: { name: 'A & B' }, postenTabelle: '<table>\n<tr><td>1</td></tr></table>', s: '1,00 €' });
 eq(html, '<p>Hallo A &amp; B,</p>\n<table><tr><td>1</td></tr></table>\n<p>Summe <b>1,00 €</b> &lt;x&gt;<br>Zeile <mark>{{fehlt}}</mark></p>', 'vorlageZuHTML');
