@@ -1430,13 +1430,37 @@
   }
   function datumSerial(iso) { return diffDays('1899-12-30', iso); }
   /** Stil einer vorhandenen Datumszelle derselben Spalte (damit das Datum wie die anderen aussieht), sonst null */
-  function datumsStil(sheet, styles, spalte) {
+  function stilInfo(styles) {
     const fmts = {}; (String(styles || '').match(/<numFmt [^>]*\/>/g) || []).forEach(n => { fmts[+(n.match(/numFmtId="(\d+)"/) || [])[1]] = xmlDecode((n.match(/formatCode="([^"]*)"/) || [])[1] || ''); });
-    const xfs = ((String(styles || '').match(/<cellXfs[^>]*>([\s\S]*?)<\/cellXfs>/) || [])[1] || '').match(/<xf [^>]*?(?:\/>|>[\s\S]*?<\/xf>)/g) || [];
-    const istDatum = s => { const x = xfs[s]; if (!x) return false; const id = +(x.match(/numFmtId="(\d+)"/) || [])[1]; if ((id >= 14 && id <= 22) || (id >= 45 && id <= 47)) return true; const c = (fmts[id] || '').replace(/"[^"]*"|\[[^\]]*\]/g, ''); return /[dmy]/i.test(c) && !/[#0?]/.test(c); };
+    const xfs = ((String(styles || '').match(/<cellXfs[^>]*>([\s\S]*?)<\/cellXfs>/) || [])[1] || '').match(/<xf\b[^>]*?(?:\/>|>[\s\S]*?<\/xf>)/g) || [];
+    const fmtVon = s => { const x = xfs[s]; return x ? +((x.match(/numFmtId="(\d+)"/) || [])[1] || 0) : 0; };
+    const istDatum = s => { if (!xfs[s]) return false; const id = fmtVon(s); if ((id >= 14 && id <= 22) || (id >= 45 && id <= 47)) return true; const c = (fmts[id] || '').replace(/"[^"]*"|\[[^\]]*\]/g, ''); return /[dmy]/i.test(c) && !/[#0?]/.test(c); };
+    return { xfs, istDatum, fmtVon };
+  }
+  /** Stil einer vorhandenen Datumszelle derselben Spalte (Vorlage für das Datumsformat), sonst null */
+  function datumsStil(sheet, styles, spalte) {
+    const { istDatum } = stilInfo(styles);
     const re = new RegExp('<c r="' + spalte + '\\d+"([^>]*?)>\\s*<v>\\d+(\\.\\d+)?</v>', 'g'); let m;
     while ((m = re.exec(sheet))) { const st = (m[1].match(/\bs="(\d+)"/) || [])[1]; if (st && !/\bt="/.test(m[1]) && istDatum(+st)) return st; }
     return null;
+  }
+  /**
+   * Zellstil mit Datumsformat: Farbe, Rahmen und Schrift der Zelle bleiben, nur das Zahlenformat wird
+   * auf das Datumsformat der Spalte gesetzt (bei Bedarf wird dafür ein neuer Stil angelegt). ctx: { styles, cache }
+   */
+  function stilAlsDatum(ctx, s, vorlage) {
+    const info = stilInfo(ctx.styles);
+    if (s != null && info.istDatum(+s)) return String(s);
+    const fmt = vorlage != null && info.istDatum(+vorlage) ? info.fmtVon(+vorlage) : 14;
+    const key = (s == null ? '-' : s) + '|' + fmt;
+    if (ctx.cache[key] != null) return ctx.cache[key];
+    if (!/<cellXfs[^>]*>/.test(ctx.styles)) return vorlage || null;
+    let basis = (s != null && info.xfs[+s]) || info.xfs[0] || '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>';
+    basis = /numFmtId="/.test(basis) ? basis.replace(/numFmtId="\d+"/, 'numFmtId="' + fmt + '"') : basis.replace(/^<xf\b/, '<xf numFmtId="' + fmt + '"');
+    basis = /applyNumberFormat="/.test(basis) ? basis.replace(/applyNumberFormat="\w+"/, 'applyNumberFormat="1"') : basis.replace(/^<xf\b/, '<xf applyNumberFormat="1"');
+    const idx = info.xfs.length;
+    ctx.styles = ctx.styles.replace(/<\/cellXfs>/, () => basis + '</cellXfs>').replace(/(<cellXfs[^>]*\bcount=")(\d+)(")/, (m, a, n, b) => a + (idx + 1) + b);
+    return (ctx.cache[key] = String(idx));
   }
   /** Zelle setzen: { datum } als Excel-Datum (mit Datumsstil) bzw. { text }; vorhandener Zellstil bleibt */
   function zelleSetzen(sheet, ref, wert, datumStil) {
@@ -1444,8 +1468,13 @@
     const z = zeilenXml(sheet, nr); if (!z) return null;
     const alt = (z.xml.match(new RegExp('<c r="' + ref + '"[^>]*?(?:/>|>[\\s\\S]*?</c>)')) || [])[0];
     let stil = alt ? (alt.match(/\bs="(\d+)"/) || [])[1] : null;
+    if (stil == null) { // neue Zelle: Stil des linken Nachbarn übernehmen (gleiche Zeilenfarbe)
+      const idx = spalteIndex(col); let best = -1;
+      (z.xml.match(/<c r="[A-Z]+\d+"[^>]*?\bs="\d+"/g) || []).forEach(c => { const i = spalteIndex(c.match(/r="([A-Z]+)/)[1]); if (i < idx && i > best) { best = i; stil = c.match(/\bs="(\d+)"/)[1]; } });
+    }
+    const dStil = typeof datumStil === 'function' ? datumStil(stil) : datumStil;
     let neu;
-    if (wert.datum && datumStil) neu = '<c r="' + ref + '" s="' + datumStil + '"><v>' + datumSerial(wert.datum) + '</v></c>';
+    if (wert.datum && dStil) neu = '<c r="' + ref + '" s="' + dStil + '"><v>' + datumSerial(wert.datum) + '</v></c>';
     else {
       const txt = wert.datum ? fmtDatum(wert.datum) : wert.text;
       neu = (txt === '' || txt == null) ? '<c r="' + ref + '"' + (stil ? ' s="' + stil + '"' : '') + '/>'
@@ -1493,7 +1522,8 @@
     return out;
   }
   /** Neue Zeile am Ende des Blatts anhängen (Stile aus der letzten Aufgabenzeile) → { sheet, nr } */
-  function zeileAnhaengen(sheet, styles, sp, w) {
+  function zeileAnhaengen(sheet, ctx, sp, w) {
+    if (typeof ctx === 'string') ctx = { styles: ctx, cache: {} };
     const nrs = (sheet.match(/<row r="(\d+)"/g) || []).map(r => +r.match(/\d+/)[0]);
     const nr = (nrs.length ? Math.max(...nrs) : 0) + 1;
     const stilVon = {};
@@ -1504,7 +1534,7 @@
     }
     const zellen = [];
     const text = (col, t) => { if (col == null || !t) return; zellen.push([col, '<c r="' + spalteBuchstabe(col) + nr + '"' + (stilVon[col] ? ' s="' + stilVon[col] + '"' : '') + ' t="inlineStr"><is><t xml:space="preserve">' + xmlEncode(t) + '</t></is></c>']); };
-    const datum = (col, iso) => { if (col == null || !iso) return; const st = datumsStil(sheet, styles, spalteBuchstabe(col)); if (!st) return text(col, fmtDatum(iso)); zellen.push([col, '<c r="' + spalteBuchstabe(col) + nr + '" s="' + st + '"><v>' + datumSerial(iso) + '</v></c>']); };
+    const datum = (col, iso) => { if (col == null || !iso) return; const st = stilAlsDatum(ctx, stilVon[col], datumsStil(sheet, ctx.styles, spalteBuchstabe(col))); if (!st) return text(col, fmtDatum(iso)); zellen.push([col, '<c r="' + spalteBuchstabe(col) + nr + '" s="' + st + '"><v>' + datumSerial(iso) + '</v></c>']); };
     text(sp.objekt, w.objekt); text(sp.sb, w.sb); text(sp.aufgabe, w.aufgabe); datum(sp.termin, w.termin); text(sp.schritt, w.schritt); datum(sp.wv, w.wv);
     if (sp.prio != null) text(sp.prio, w.prio);
     const zeile = '<row r="' + nr + '">' + zellen.sort((a, b) => a[0] - b[0]).map(z => z[1]).join('') + '</row>';
@@ -1519,8 +1549,10 @@
   /** Änderungen in das Blatt-XML schreiben → { sheet, ok:[], fehlt:[], konflikt:[] } */
   function excelBlattAktualisieren(sheet, sst, styles, aenderungen) {
     const ok = [], fehlt = [], konflikt = [];
+    const ctx = { styles: String(styles || ''), cache: {} };
+    const alsDatum = col => zellStil => stilAlsDatum(ctx, zellStil, datumsStil(sheet, ctx.styles, col));
     aenderungen.forEach(a => {
-      if (a.neu) { const r = zeileAnhaengen(sheet, styles, a.spalten, a.werte); sheet = r.sheet; ok.push(Object.assign(a, { zeile: r.nr })); return; }
+      if (a.neu) { const r = zeileAnhaengen(sheet, ctx, a.spalten, a.werte); sheet = r.sheet; ok.push(Object.assign(a, { zeile: r.nr })); return; }
       const nr = listenZeileFinden(sheet, sst, a.f);
       if (!nr) { fehlt.push(a); return; }
       const sp = a.f.listenSpalten;
@@ -1541,16 +1573,16 @@
       if (a.wv) {
         const col = spalteBuchstabe(sp.wv);
         // Zusatz wie „Alimi“ oder „anrufen“ bleibt erhalten → als Text „05.10.2026 Alimi“, sonst echtes Excel-Datum
-        sheet = (a.f.wvText ? zelleSetzen(sheet, col + nr, { text: fmtDatum(a.wv) + ' ' + a.f.wvText }) : zelleSetzen(sheet, col + nr, { datum: a.wv }, datumsStil(sheet, styles, col))) || sheet;
+        sheet = (a.f.wvText ? zelleSetzen(sheet, col + nr, { text: fmtDatum(a.wv) + ' ' + a.f.wvText }) : zelleSetzen(sheet, col + nr, { datum: a.wv }, alsDatum(col))) || sheet;
       }
       if (a.termin) {
         const col = spalteBuchstabe(sp.termin); const zusatz = a.f.terminText && !/^\s*(KW|\d)/i.test(a.f.terminText) ? a.f.terminText : '';
-        sheet = (zusatz ? zelleSetzen(sheet, col + nr, { text: fmtDatum(a.termin) + ' ' + zusatz }) : zelleSetzen(sheet, col + nr, { datum: a.termin }, datumsStil(sheet, styles, col))) || sheet;
+        sheet = (zusatz ? zelleSetzen(sheet, col + nr, { text: fmtDatum(a.termin) + ' ' + zusatz }) : zelleSetzen(sheet, col + nr, { datum: a.termin }, alsDatum(col))) || sheet;
       }
       if (a.schritt != null) sheet = zelleSetzen(sheet, spalteBuchstabe(sp.schritt) + nr, { text: a.schritt }) || sheet;
       ok.push(Object.assign(a, { zeile: nr }));
     });
-    return { sheet, ok, fehlt, konflikt };
+    return { sheet, styles: ctx.styles, ok, fehlt, konflikt };
   }
   /** Nach erfolgreichem Schreiben: Stand der Excel merken (neue Zeilen werden zu Listen-Aufgaben) */
   function excelGeschrieben(ok) {
@@ -1600,7 +1632,7 @@
     offenSumme, kuendigungsCheck, verteileZahlung, kautionsabrechnung, verjaehrung, kautionAmpel, ratenplan,
     monateText, defaultEmail, taktUmstellen, vorgangAktiv, vorgangPruefen, geflaggt, schrittSetzen, ersetzbareWV, schrittAusWV, wvDatum, createWV, completeWV, snoozeWV, setWVDatum, plusEinheit, WV_EINHEITEN, defaultUI, closeWV, offeneWV, addVerlauf, wvRegeln, applyAction, findFall,
     getPath, vorlageZuHTML, vorlageZuText,
-    parseCSV, guessMapping, typAusText, importOPOS, normName, nameAufteilen, parseMietzeit, parseSaldo, parseWV, erkenneFormat, titelMieter, parseJsonBlatt, parseSaldenBlatt, findeMieter, saldoAbgleich, importSalden, parseTelefonliste, importTelefonliste, parseOposPdf, importOposPdf, nettoPosten, pdfUmlaute, typAusBuchung, monatsmieteSchaetzen, kwMontag, parseTermin, parseIhListe, adresseTeile, objektFinden, importIhListe, sstLesen, zeileLesen, listenZeileFinden, zelleSetzen, datumsStil, excelAenderungen, excelBlattAktualisieren, excelGeschrieben, zeileAnhaengen, ihListenSchluessel, spalteBuchstabe, datumSerial, adresseZuMieter, emailsZuMieter, adressbuchVerknuepfen, whgNr, asciiDateiname, buildEML
+    parseCSV, guessMapping, typAusText, importOPOS, normName, nameAufteilen, parseMietzeit, parseSaldo, parseWV, erkenneFormat, titelMieter, parseJsonBlatt, parseSaldenBlatt, findeMieter, saldoAbgleich, importSalden, parseTelefonliste, importTelefonliste, parseOposPdf, importOposPdf, nettoPosten, pdfUmlaute, typAusBuchung, monatsmieteSchaetzen, kwMontag, parseTermin, parseIhListe, adresseTeile, objektFinden, importIhListe, sstLesen, zeileLesen, listenZeileFinden, zelleSetzen, datumsStil, excelAenderungen, excelBlattAktualisieren, excelGeschrieben, zeileAnhaengen, ihListenSchluessel, stilAlsDatum, spalteBuchstabe, datumSerial, adresseZuMieter, emailsZuMieter, adressbuchVerknuepfen, whgNr, asciiDateiname, buildEML
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = Core;
   else root.Core = Core;

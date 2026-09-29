@@ -419,5 +419,18 @@ truthy(eml.startsWith('X-Unsent: 1\r\n'), 'EML X-Unsent');
 truthy(eml.includes('filename="Mahnung_Mueller.pdf"'), 'EML Anhang ASCII-Name');
 truthy(eml.includes('=?UTF-8?B?'), 'EML Betreff kodiert');
 
+
+section('Excel: Datum behält Zellfarbe');
+{
+  const styles = '<styleSheet><numFmts count="1"><numFmt numFmtId="165" formatCode="d\\-mmm"/></numFmts><cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="165" fontId="1" fillId="0" borderId="1" xfId="0" applyNumberFormat="1"/><xf numFmtId="49" fontId="1" fillId="3" borderId="1" xfId="0" applyNumberFormat="1"/></cellXfs></styleSheet>';
+  const ctx = { styles, cache: {} };
+  eq(C.stilAlsDatum(ctx, '1', '1'), '1', 'Datumszelle behält eigenen Stil');
+  const neu = C.stilAlsDatum(ctx, '2', '1');
+  eq(neu, '3', 'Textzelle → neuer Stil angehängt');
+  truthy(ctx.styles.includes('<xf numFmtId="165" fontId="1" fillId="3" borderId="1" xfId="0" applyNumberFormat="1"/></cellXfs>'), 'Füllung/Rahmen übernommen, Datumsformat der Spalte');
+  truthy(ctx.styles.includes('<cellXfs count="4">'), 'cellXfs count erhöht');
+  eq(C.stilAlsDatum(ctx, '2', '1'), '3', 'Stil wird wiederverwendet');
+}
+
 console.log('\n' + ok + ' bestanden, ' + fail + ' fehlgeschlagen');
 process.exit(fail ? 1 : 0);

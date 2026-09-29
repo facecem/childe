@@ -695,6 +695,7 @@ Mit freundlichen Grüßen
     const r = C.excelBlattAktualisieren(sheet, sst, styles, aenderungen);
     if (!r.ok.length) return Object.assign(r, { blob: null, alt });
     zip.file(ziel, r.sheet);
+    if (r.styles && r.styles !== styles) zip.file('xl/styles.xml', r.styles); // neuer Datumsstil mit Zellfarbe
     // Berechnungskette verwerfen – Excel baut sie beim Öffnen neu auf (verhindert Reparaturmeldungen)
     if (zip.file('xl/calcChain.xml')) {
       zip.remove('xl/calcChain.xml');
