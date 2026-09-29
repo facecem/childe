@@ -284,12 +284,14 @@
     const vorschlaege = Array.from(new Set([...(SCHRITT_VORSCHLAEGE[b] || []), ...(UI().wvAufgaben || [])]));
     const chips = [1, 2, 3, 4, 7, 14].map(n => '<button type="button" class="s" data-plus="' + n + '">+' + n + '</button>').join('');
     const abschluss = b === 'opos' ? 'Fall erledigt' : b === 'ih' ? 'Aufgabe erledigt' : '';
+    const bisher = C.ersetzbareWV(App.data, b, id).filter(w => !o.wv || w.id !== o.wv.id);
     const v = await formModal(o.titel || 'Nächster Schritt + WV', [
       { k: 'html', t: 'html', html: '<p class="muted"><b>' + esc(H.fallLabel(b, f)) + '</b>' + (o.wv ? '<br>erledigt: ' + esc(o.wv.aufgabe) : '') + '</p>' },
       { k: 'schritt', l: 'Nächster Schritt', req: true, full: true, list: 'dl_schritt', ph: 'Was ist als Nächstes zu tun?' },
       { k: 'datum', l: 'WV am', t: 'date', req: true, hint: '<span class="chips">' + chips + '</span>' },
+      ...(bisher.length ? [{ k: 'ersetzen', l: 'bisherige WV ersetzen (' + bisher.map(w => fmtDatum(w.datum)).join(', ') + ')', t: 'checkbox', full: true, hint: 'Die neue WV gilt dann als die WV dieses Vorgangs (auch in der Instandhaltungsliste). Termine, Raten und Verjährungs-WV bleiben immer bestehen.' }] : []),
       { k: 'html2', t: 'html', html: '<datalist id="dl_schritt">' + vorschlaege.map(x => '<option value="' + esc(x) + '">').join('') + '</datalist>' }
-    ], { schritt: o.wv ? '' : (f.naechsterSchritt || ''), datum: C.addDays(C.today(), UI().neuWvTage) }, {
+    ], { schritt: o.wv ? '' : (f.naechsterSchritt || ''), datum: C.addDays(C.today(), UI().neuWvTage), ersetzen: true }, {
       ok: o.wv ? '✓ Erledigt + WV anlegen' : 'Speichern',
       extra: [...(abschluss ? [{ label: '✓ ' + abschluss, value: 'abschluss', cls: 'ghost' }] : []), ...(o.wv ? [{ label: 'Nur erledigen (⚑ geflaggt)', value: 'nur', cls: 'ghost' }] : [])],
       onOpen(d) {
@@ -305,7 +307,7 @@
       if (b === 'ih') { f.status = 'erledigt'; f.naechsterSchritt = ''; C.closeWV(App.data, 'ih', id); App.data.wv.forEach(w => { if (w.bereich === 'ih' && w.refId === id && w.status === 'offen') { w.status = 'erledigt'; w.erledigtAm = C.today(); } }); C.addVerlauf(App.data, 'ih', id, 'erledigt', 'Aufgabe erledigt'); }
       App.commit(); toast('Vorgang abgeschlossen.'); return true;
     }
-    const w = C.schrittSetzen(App.data, b, id, v.schritt, v.datum, { erledigeWV: o.wv && o.wv.id });
+    const w = C.schrittSetzen(App.data, b, id, v.schritt, v.datum, { erledigeWV: o.wv && o.wv.id, ersetzen: v.ersetzen !== false });
     App.commit(); toast('Nächster Schritt gesetzt – WV ' + fmtDatum(w.datum) + '.');
     return true;
   };

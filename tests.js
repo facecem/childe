@@ -332,6 +332,18 @@ eq(aN.map(a => [!!a.neu, a.blatt, a.werte && a.werte.wv]), [[true, 'TO DO', '202
 C.excelGeschrieben([Object.assign(aN[0], { zeile: 377 })]);
 eq([dN.ih[1].quelle, dN.ih[1].listenZeile, C.excelAenderungen(dN).length], ['ih-liste', 377, 0], 'danach Listen-Aufgabe, keine offenen Änderungen');
 
+section('Neuer Schritt ersetzt die WV (Excel bekommt die neue WV)');
+const dE = C.emptyData();
+dE.ih.push({ id: 'e', quelle: 'ih-liste', listenSpalten: { objekt: 2, aufgabe: 4, wv: 9, schritt: 8, termin: 6 }, listenBlatt: 'TO DO', status: 'gemeldet', listeWVDatum: '2026-09-17', listeWVBasis: '2026-09-17', listeSchritt: 'Angebot holen', naechsterSchritt: 'Angebot holen' });
+C.createWV(dE, 'ih', 'e', '2026-09-17', 'Angebot holen', { erstelltDurch: 'manuell', regel: 'ih-liste' });
+C.createWV(dE, 'ih', 'e', '2026-10-06', 'Termin: …', { erstelltDurch: 'manuell', regel: 'ih-liste-termin' });
+C.schrittSetzen(dE, 'ih', 'e', 'Firma Alimi anrufen', '2026-10-01', { heute: '2026-09-29' });
+eq(C.offeneWV(dE, 'ih', 'e').map(w => [w.datum, w.regel || '']), [['2026-10-01', ''], ['2026-10-06', 'ih-liste-termin']], 'alte Listen-WV ersetzt, Termin-WV bleibt');
+eq(C.excelAenderungen(dE).map(a => [a.wv, a.schritt]), [['2026-10-01', 'Firma Alimi anrufen']], 'Excel bekommt WV und Schritt');
+const dK = testData(); C.applyAction(dK, 'kaution', 'k1', 'auszug', { heute: '2026-09-30', uebergabeAm: '2026-09-30' });
+C.schrittSetzen(dK, 'kaution', 'k1', 'Bankverbindung anfordern', '2026-10-05', { heute: '2026-09-30' });
+truthy(C.offeneWV(dK, 'kaution', 'k1').some(w => /Verjährung/.test(w.aufgabe)), 'Verjährungs-WV wird nie ersetzt');
+
 section('Vorlagen');
 const html = C.vorlageZuHTML('Hallo {{m.name}},\n\n{{postenTabelle}}\n\nSumme **{{s}}** <x>\nZeile {{fehlt}}', { m: { name: 'A & B' }, postenTabelle: '<table>\n<tr><td>1</td></tr></table>', s: '1,00 €' });
 eq(html, '<p>Hallo A &amp; B,</p>\n<table><tr><td>1</td></tr></table>\n<p>Summe <b>1,00 €</b> &lt;x&gt;<br>Zeile <mark>{{fehlt}}</mark></p>', 'vorlageZuHTML');

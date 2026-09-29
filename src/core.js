@@ -544,11 +544,16 @@
     Object.keys(BEREICHE).forEach(b => (data[b] || []).forEach(f => { const p = vorgangPruefen(data, b, f); if (p.geflaggt) out.push(Object.assign({ bereich: b, fall: f }, p)); }));
     return out;
   }
-  /** Nächsten Schritt + WV setzen (optional eine WV dabei erledigen) */
+  const GESCHUETZTE_WV = ['ih-liste-termin', 'opos:raten', 'kaution:auszug', 'kaution:nkEinbehalt', 'kaution:uebergabe'];
+  /** Offene WV eines Vorgangs, die ein neuer nächster Schritt ersetzt */
+  function ersetzbareWV(data, bereich, id) { return data.wv.filter(w => w.bereich === bereich && w.refId === id && w.status === 'offen' && !GESCHUETZTE_WV.includes(w.regel)); }
+  /** Nächsten Schritt + WV setzen (optional eine WV dabei erledigen, bisherige WV werden ersetzt) */
   function schrittSetzen(data, bereich, id, schritt, datum, o = {}) {
     const f = findFall(data, bereich, id); if (!f) return null;
     const h = o.heute || today();
     if (o.erledigeWV) completeWV(data, o.erledigeWV, h);
+    // die neue WV ersetzt die bisherigen (Termine, Raten, Verjährung usw. bleiben)
+    if (o.ersetzen !== false) ersetzbareWV(data, bereich, id).forEach(w => { w.status = 'erledigt'; w.erledigtAm = h; w.ersetzt = true; });
     f.naechsterSchritt = String(schritt || '').trim();
     const w = datum ? createWV(data, bereich, id, datum, f.naechsterSchritt || 'Wiedervorlage', { erstelltDurch: 'manuell', heute: h }) : null;
     addVerlauf(data, bereich, id, 'schritt', 'Nächster Schritt: ' + (f.naechsterSchritt || '–') + (w ? ' (WV ' + fmtDatum(w.datum) + ')' : ''), h);
@@ -1593,7 +1598,7 @@
     mieterName, briefanrede,
     defaultSettings, emptyData, normalize, migratePrototype, stufeAusText,
     offenSumme, kuendigungsCheck, verteileZahlung, kautionsabrechnung, verjaehrung, kautionAmpel, ratenplan,
-    monateText, defaultEmail, taktUmstellen, vorgangAktiv, vorgangPruefen, geflaggt, schrittSetzen, schrittAusWV, wvDatum, createWV, completeWV, snoozeWV, setWVDatum, plusEinheit, WV_EINHEITEN, defaultUI, closeWV, offeneWV, addVerlauf, wvRegeln, applyAction, findFall,
+    monateText, defaultEmail, taktUmstellen, vorgangAktiv, vorgangPruefen, geflaggt, schrittSetzen, ersetzbareWV, schrittAusWV, wvDatum, createWV, completeWV, snoozeWV, setWVDatum, plusEinheit, WV_EINHEITEN, defaultUI, closeWV, offeneWV, addVerlauf, wvRegeln, applyAction, findFall,
     getPath, vorlageZuHTML, vorlageZuText,
     parseCSV, guessMapping, typAusText, importOPOS, normName, nameAufteilen, parseMietzeit, parseSaldo, parseWV, erkenneFormat, titelMieter, parseJsonBlatt, parseSaldenBlatt, findeMieter, saldoAbgleich, importSalden, parseTelefonliste, importTelefonliste, parseOposPdf, importOposPdf, nettoPosten, pdfUmlaute, typAusBuchung, monatsmieteSchaetzen, kwMontag, parseTermin, parseIhListe, adresseTeile, objektFinden, importIhListe, sstLesen, zeileLesen, listenZeileFinden, zelleSetzen, datumsStil, excelAenderungen, excelBlattAktualisieren, excelGeschrieben, zeileAnhaengen, ihListenSchluessel, spalteBuchstabe, datumSerial, adresseZuMieter, emailsZuMieter, adressbuchVerknuepfen, whgNr, asciiDateiname, buildEML
   };
