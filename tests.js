@@ -481,5 +481,10 @@ eq(C.defaultSettings().fristen.emailMahnung, 2, 'Standard: 2 Werktage');
   eq(eigen.settings.fristen.emailMahnung, 3, 'eigener Wert bleibt');
 }
 
+
+section('PDF-Umlaute: Ä');
+eq(C.pdfUmlaute('R‹CKLAST HƒRTER, DANNY FRAU'), 'RÜCKLAST HÄRTER, DANNY FRAU', 'ƒ → Ä (Zeichensatz der OPOS-PDF)');
+eq(C.normalize({ opos: [{ id: 'x', posten: [{ id: 'p', bez: 'RL-Gebühr Bank 05.08.25 HƒR' }] }], meta: { takt: 2, schritte: 1, mahnWT: 2 } }).opos[0].posten[0].bez, 'RL-Gebühr Bank 05.08.25 HÄR', 'bereits eingelesene Posten werden repariert');
+
 console.log('\n' + ok + ' bestanden, ' + fail + ' fehlgeschlagen');
 process.exit(fail ? 1 : 0);

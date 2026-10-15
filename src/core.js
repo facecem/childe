@@ -219,7 +219,7 @@
       out.meta.mahnWT = 2;
     }
     if (!out.meta.schritte) { schrittAusWV(out); out.meta.schritte = 1; if (!out.settings.ui.kacheln.includes('flag')) out.settings.ui.kacheln.unshift('flag'); }
-    out.opos.forEach(f => { f.posten = f.posten || []; f.raten = f.raten || []; });
+    out.opos.forEach(f => { f.posten = f.posten || []; f.raten = f.raten || []; f.posten.forEach(p => { if (/ƒ/.test(p.bez || '')) p.bez = p.bez.replace(/ƒ/g, 'Ä'); }); }); // „HƒRTER“ → „HÄRTER“ (alte PDF-Importe)
     out.ih.forEach(f => { f.angebote = f.angebote || []; f.fotos = f.fotos || []; f.anfragen = f.anfragen || []; });
     out.kaution.forEach(f => { f.einbehalte = f.einbehalte || []; });
     return out;
@@ -1095,7 +1095,7 @@
   /* ---------- OPOS-Liste (PDF, Einzelposten je Debitor) ---------- */
   /** Umlaute der PDF-Ausgabe reparieren (‰ ä, ˆ ö, ¸ ü, ‹ Ü, ÷ Ö, „fl“ zwischen Großbuchstaben ß) */
   function pdfUmlaute(t) {
-    return String(t || '').replace(/‰/g, 'ä').replace(/ˆ/g, 'ö').replace(/¸/g, 'ü').replace(/‹/g, 'Ü').replace(/÷/g, 'Ö').replace(/Ä/g, 'Ä')
+    return String(t || '').replace(/‰/g, 'ä').replace(/ˆ/g, 'ö').replace(/¸/g, 'ü').replace(/‹/g, 'Ü').replace(/÷/g, 'Ö').replace(/ƒ/g, 'Ä')
       .replace(/([A-ZÄÖÜ])\s?fl\s?([A-ZÄÖÜ])/g, '$1ß$2');
   }
   /** Textstücke einer Zeile zusammensetzen: aneinanderstoßende Stücke ohne Leerzeichen */
