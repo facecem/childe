@@ -172,7 +172,7 @@ Mit freundlichen Grüßen
     },
     mail_mahnung: {
       bereich: 'opos', titel: 'E-Mail-Mahnung (Mahnen-Knopf)', empfaenger: 'mieter', nurEmail: true,
-      betreff: 'Zahlungserinnerung – Miete {{monate}} – {{objekt.strasse}}{{mieter.whgKomma}}',
+      betreff: 'Mahnung – Miete {{monate}} – {{objekt.strasse}}{{mieter.whgKomma}}',
       text: `Sehr geehrte Damen und Herren,
 
 nach Prüfung unserer Zahlungseingänge haben wir festgestellt, dass folgende Beträge aus Ihrem Mietkonto bislang nicht beglichen wurden:

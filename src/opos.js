@@ -110,7 +110,7 @@
     const f = { id: C.uid(), mieterId, stufe: 'neu', posten: [], raten: [], notiz: '', angelegt: C.today() };
     App.data.opos.push(f);
     C.addVerlauf(App.data, 'opos', f.id, 'angelegt', 'Fall angelegt');
-    C.createWV(App.data, 'opos', f.id, C.today(), 'Offene Posten prüfen – Zahlungserinnerung versenden?', { regel: 'opos:neu' });
+    C.createWV(App.data, 'opos', f.id, C.today(), 'Offene Posten prüfen – mahnen?', { regel: 'opos:neu' });
     f.naechsterSchritt = 'Offene Posten prüfen – mahnen?';
     return f;
   }
@@ -425,7 +425,7 @@
     const vorher = new Set(App.data.opos.map(f => f.id));
     const start = Math.max(1, +w.kopfZeile || 1);
     const st = C.importOPOS(App.data, rows.slice(start), mapping, C.today(), { mieterId });
-    App.data.opos.filter(f => !vorher.has(f.id)).forEach(f => (C.createWV(App.data, 'opos', f.id, C.today(), 'Importierten Fall prüfen – Zahlungserinnerung versenden?', { regel: 'opos:neu' }), f.naechsterSchritt = 'Importierten Fall prüfen – mahnen?'));
+    App.data.opos.filter(f => !vorher.has(f.id)).forEach(f => (C.createWV(App.data, 'opos', f.id, C.today(), 'Importierten Fall prüfen – mahnen?', { regel: 'opos:neu' }), f.naechsterSchritt = 'Importierten Fall prüfen – mahnen?'));
     const fall = mieterId && App.data.opos.find(f => f.mieterId === mieterId && f.stufe !== 'erledigt');
     if (fall) { App.tab = 'opos'; App.detail = fall.id; }
     App.commit();
@@ -462,7 +462,7 @@
   App.act.oposMahnenMail = async function (ds) {
     const f = H.fall('opos', ds.id); const m = H.mieter(f.mieterId) || {}; const S2 = App.data.settings;
     const offenP = f.posten.filter(p => C.round2(p.offen) !== 0).sort((a, b) => (a.faellig || '').localeCompare(b.faellig || ''));
-    const werte = { to: C.emailsZuMieter(App.data, m), frist: C.addDays(C.today(), Number(S2.fristen.emailMahnung) || 7), abmahnung: S2.email.abmahnungStandard, sel: offenP.map(p => p.id) };
+    const werte = { to: C.emailsZuMieter(App.data, m), frist: C.mahnFrist(C.today(), S2.fristen.emailMahnung), abmahnung: S2.email.abmahnungStandard, sel: offenP.map(p => p.id) };
     let manuell = false;
     const v = await App.formModal('✉ Mahnen – ' + C.mieterName(m), [
       { k: 'to', l: 'Empfänger (E-Mail, mehrere mit ; trennen)', full: true, hint: m.email ? (m.emailQuelle === 'telefonliste' ? 'aus der Telefonliste' + (App.data.meta.telefonlisteStand ? ' vom ' + fmtDatum(App.data.meta.telefonlisteStand) : '') : '')

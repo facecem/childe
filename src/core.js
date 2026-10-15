@@ -55,6 +55,8 @@
   function naechsterWerktag(iso, nrw = true) { let d = iso; while (!isWerktag(d, nrw)) d = addDays(d, 1); return d; }
   function vorherigerWerktag(iso, nrw = true) { let d = iso; while (!isWerktag(d, nrw)) d = addDays(d, -1); return d; }
   function addWerktage(iso, n, nrw = true) { let d = iso, c = 0; while (c < n) { d = addDays(d, 1); if (isWerktag(d, nrw)) c++; } return d; }
+  /** Frist der E-Mail-Mahnung: n Werktage ab heute (Mo → Mi, Do → Mo, Fr → Di) */
+  function mahnFrist(heute, n, nrw = true) { return addWerktage(heute, Number(n) > 0 ? Number(n) : 2, nrw); }
 
   /**
    * Termin der ordentlichen Kündigung durch den Vermieter (§ 573c Abs. 1 BGB).
@@ -139,7 +141,7 @@
       fristen: {
         erinnerung: 7, mahnung1: 7, mahnungLetzte: 5, abmahnung: 7, kuendigung: 14, anwalt: 7,
         angebot: 3, ausfuehrung: 5, rechnung: 7, ihMieter: 7, weiterbelastung: 14,
-        kautionAbrechnungMonate: 2, kautionPruefen: 14, auszahlung: 7, bankverbindung: 7, emailMahnung: 5
+        kautionAbrechnungMonate: 2, kautionPruefen: 14, auszahlung: 7, bankverbindung: 7, emailMahnung: 2
       },
       puffer: 1, mahngebuehr: 0, feiertageNRW: true, ratenVerzugTage: 14,
       email: defaultEmail(),
@@ -209,6 +211,11 @@
     out.vorlagen = d.vorlagen && typeof d.vorlagen === 'object' ? d.vorlagen : {};
     out.meta = Object.assign({ lastBackup: null, erstellt: today() }, d.meta || {});
     if (!(d.meta && d.meta.takt)) out.meta.takt = 1;
+    if (!out.meta.mahnWT) { // ✉ Mahnen: Frist in Werktagen (2), Betreff „Mahnung“ statt „Zahlungserinnerung“
+      if ([5, 7].includes(Number(out.settings.fristen.emailMahnung))) out.settings.fristen.emailMahnung = 2;
+      const mv = out.vorlagen.mail_mahnung; if (mv && mv.betreff) mv.betreff = mv.betreff.replace(/^Zahlungserinnerung\b/, 'Mahnung');
+      out.meta.mahnWT = 1;
+    }
     if (!out.meta.schritte) { schrittAusWV(out); out.meta.schritte = 1; if (!out.settings.ui.kacheln.includes('flag')) out.settings.ui.kacheln.unshift('flag'); }
     out.opos.forEach(f => { f.posten = f.posten || []; f.raten = f.raten || []; });
     out.ih.forEach(f => { f.angebote = f.angebote || []; f.fotos = f.fotos || []; f.anfragen = f.anfragen || []; });
@@ -476,7 +483,7 @@
         return { schliessen: true, frist, neu: [{ datum: addDays(frist, P), aufgabe: 'Zahlungseingang prüfen (' + (STUFEN[aktion] || 'Abmahnung') + ', Frist ' + fmtDatum(frist) + ')' }] };
       }
       case 'opos:emailMahnung': {
-        const frist = ctx.frist || naechsterWerktag(addDays(h, Number(f.emailMahnung) || 5), nrw);
+        const frist = ctx.frist || mahnFrist(h, f.emailMahnung, nrw);
         return { schliessen: true, frist, neu: [{ datum: addDays(frist, P), aufgabe: 'Zahlungseingang prüfen (E-Mail-Mahnung' + (ctx.abmahnung ? ' + Abmahnung' : '') + ', Frist ' + fmtDatum(frist) + ')' }] };
       }
       case 'opos:kuendigung': {
@@ -1644,7 +1651,7 @@
   const Core = {
     STORE_KEY, PROTOTYP_KEY, DATA_VERSION, STUFEN, STUFEN_REIHE, IH_STATUS, IH_DRINGLICHKEIT, K_STATUS, BEREICHE, AKTIONEN, IMPORT_FELDER,
     today, isISO, addDays, addMonths, endOfMonth, diffDays, maxISO, easterSunday, feiertageNRW, feiertagName, isWochenende, isWerktag,
-    naechsterWerktag, vorherigerWerktag, addWerktage, ordentlicherKuendigungstermin,
+    naechsterWerktag, vorherigerWerktag, addWerktage, mahnFrist, ordentlicherKuendigungstermin,
     fmtDatum, parseDatum, round2, fmtZahl, fmtEUR, parseBetrag, esc, uid, sum, b64utf8, monatLabel,
     mieterName, briefanrede,
     defaultSettings, emptyData, normalize, migratePrototype, stufeAusText,

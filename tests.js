@@ -182,7 +182,7 @@ eq(C.monateText([p('2025-12-03', 1), p('2026-01-03', 1), p('2026-02-03', 1)]), '
 eq(C.monateText([p('2026-09-03', 800)]), 'September 2026', 'Monatstext ein Monat');
 d = testData();
 C.applyAction(d, 'opos', 'o1', 'emailMahnung', { heute: '2026-09-28', abmahnung: true });
-eq([d.opos[0].stufe, d.opos[0].abmahnungAm, C.offeneWV(d, 'opos', 'o1').map(w => w.datum)], ['mahnung1', '2026-09-28', ['2026-10-06']], 'E-Mail-Mahnung: Frist +5 (03.10. Feiertag → 05.10.), WV +1');
+eq([d.opos[0].stufe, d.opos[0].abmahnungAm, C.offeneWV(d, 'opos', 'o1').map(w => w.datum)], ['mahnung1', '2026-09-28', ['2026-10-01']], 'E-Mail-Mahnung: Frist 2 Werktage (Mo → Mi), WV +1');
 truthy(/Sauren/.test(C.normalize({}).settings.email.signatur), 'Signatur-Standard');
 
 section('Telefonliste (PDF) → Adressbuch');
@@ -458,6 +458,23 @@ section('Excel: SB, Prio, Material, Besonderheiten zurückschreiben');
   f.sb = 'Cem2';
   const rK = C.excelBlattAktualisieren(shK, [], '', [Object.assign({}, C.excelAenderungen(dS).find(a => a.f === f), { wv: null, termin: null, schritt: null })]);
   eq([rK.ok.length, rK.konflikt[0] && rK.konflikt[0].feld], [0, 'SB'], 'SB in Excel von Hand geändert → nicht überschrieben');
+}
+
+
+section('✉ Mahnen: Mahnung mit 2 Werktagen Frist');
+// 12.10.2026 = Montag
+eq(['2026-10-12', '2026-10-13', '2026-10-14', '2026-10-15', '2026-10-16', '2026-10-17'].map(h => C.mahnFrist(h, 2)),
+  ['2026-10-14', '2026-10-15', '2026-10-16', '2026-10-19', '2026-10-20', '2026-10-20'], 'Mo → Mi, Do → Mo, Fr → Di (nur Werktage)');
+eq(C.mahnFrist('2026-12-23', 2), '2026-12-28', 'Feiertage zählen nicht (Weihnachten)');
+eq(C.defaultSettings().fristen.emailMahnung, 2, 'Standard: 2 Werktage');
+{
+  const dM = testData(); dM.settings.fristen.emailMahnung = 2;
+  const rM = C.applyAction(dM, 'opos', 'o1', 'emailMahnung', { heute: '2026-10-15' });
+  eq([rM.frist, dM.opos[0].stufe], ['2026-10-19', 'mahnung1'], 'Mahnen am Donnerstag → Frist Montag, Stufe Mahnung');
+  const alt = C.normalize({ settings: { fristen: { emailMahnung: 5 } }, vorlagen: { mail_mahnung: { betreff: 'Zahlungserinnerung – Miete {{monate}}' } }, meta: { takt: 2, schritte: 1 } });
+  eq([alt.settings.fristen.emailMahnung, alt.vorlagen.mail_mahnung.betreff], [2, 'Mahnung – Miete {{monate}}'], 'Umstellung alter Daten: 2 Werktage, Betreff „Mahnung“');
+  const eigen = C.normalize({ settings: { fristen: { emailMahnung: 3 } }, meta: { takt: 2, schritte: 1 } });
+  eq(eigen.settings.fristen.emailMahnung, 3, 'eigener Wert bleibt');
 }
 
 console.log('\n' + ok + ' bestanden, ' + fail + ' fehlgeschlagen');

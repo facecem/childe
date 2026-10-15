@@ -178,7 +178,7 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
 <div id="toasts" aria-live="polite"></div>
 <noscript><p style="padding:20px">Bitte JavaScript aktivieren.</p></noscript>
 <script>
-window.APP_VERSION = '2026-09-29 08:05';
+window.APP_VERSION = '2026-10-15 11:43';
 /* ===== core.js ===== */
 /* ============================================================
  * core – Datum/Werktag/Feiertage, Formatierung, Datenmodell,
@@ -237,6 +237,8 @@ window.APP_VERSION = '2026-09-29 08:05';
   function naechsterWerktag(iso, nrw = true) { let d = iso; while (!isWerktag(d, nrw)) d = addDays(d, 1); return d; }
   function vorherigerWerktag(iso, nrw = true) { let d = iso; while (!isWerktag(d, nrw)) d = addDays(d, -1); return d; }
   function addWerktage(iso, n, nrw = true) { let d = iso, c = 0; while (c < n) { d = addDays(d, 1); if (isWerktag(d, nrw)) c++; } return d; }
+  /** Frist der E-Mail-Mahnung: n Werktage ab heute (Mo → Mi, Do → Mo, Fr → Di) */
+  function mahnFrist(heute, n, nrw = true) { return addWerktage(heute, Number(n) > 0 ? Number(n) : 2, nrw); }
 
   /**
    * Termin der ordentlichen Kündigung durch den Vermieter (§ 573c Abs. 1 BGB).
@@ -321,7 +323,7 @@ window.APP_VERSION = '2026-09-29 08:05';
       fristen: {
         erinnerung: 7, mahnung1: 7, mahnungLetzte: 5, abmahnung: 7, kuendigung: 14, anwalt: 7,
         angebot: 3, ausfuehrung: 5, rechnung: 7, ihMieter: 7, weiterbelastung: 14,
-        kautionAbrechnungMonate: 2, kautionPruefen: 14, auszahlung: 7, bankverbindung: 7, emailMahnung: 5
+        kautionAbrechnungMonate: 2, kautionPruefen: 14, auszahlung: 7, bankverbindung: 7, emailMahnung: 2
       },
       puffer: 1, mahngebuehr: 0, feiertageNRW: true, ratenVerzugTage: 14,
       email: defaultEmail(),
@@ -391,6 +393,11 @@ window.APP_VERSION = '2026-09-29 08:05';
     out.vorlagen = d.vorlagen && typeof d.vorlagen === 'object' ? d.vorlagen : {};
     out.meta = Object.assign({ lastBackup: null, erstellt: today() }, d.meta || {});
     if (!(d.meta && d.meta.takt)) out.meta.takt = 1;
+    if (!out.meta.mahnWT) { // ✉ Mahnen: Frist in Werktagen (2), Betreff „Mahnung“ statt „Zahlungserinnerung“
+      if ([5, 7].includes(Number(out.settings.fristen.emailMahnung))) out.settings.fristen.emailMahnung = 2;
+      const mv = out.vorlagen.mail_mahnung; if (mv && mv.betreff) mv.betreff = mv.betreff.replace(/^Zahlungserinnerung\b/, 'Mahnung');
+      out.meta.mahnWT = 1;
+    }
     if (!out.meta.schritte) { schrittAusWV(out); out.meta.schritte = 1; if (!out.settings.ui.kacheln.includes('flag')) out.settings.ui.kacheln.unshift('flag'); }
     out.opos.forEach(f => { f.posten = f.posten || []; f.raten = f.raten || []; });
     out.ih.forEach(f => { f.angebote = f.angebote || []; f.fotos = f.fotos || []; f.anfragen = f.anfragen || []; });
@@ -658,7 +665,7 @@ window.APP_VERSION = '2026-09-29 08:05';
         return { schliessen: true, frist, neu: [{ datum: addDays(frist, P), aufgabe: 'Zahlungseingang prüfen (' + (STUFEN[aktion] || 'Abmahnung') + ', Frist ' + fmtDatum(frist) + ')' }] };
       }
       case 'opos:emailMahnung': {
-        const frist = ctx.frist || naechsterWerktag(addDays(h, Number(f.emailMahnung) || 5), nrw);
+        const frist = ctx.frist || mahnFrist(h, f.emailMahnung, nrw);
         return { schliessen: true, frist, neu: [{ datum: addDays(frist, P), aufgabe: 'Zahlungseingang prüfen (E-Mail-Mahnung' + (ctx.abmahnung ? ' + Abmahnung' : '') + ', Frist ' + fmtDatum(frist) + ')' }] };
       }
       case 'opos:kuendigung': {
@@ -1826,7 +1833,7 @@ window.APP_VERSION = '2026-09-29 08:05';
   const Core = {
     STORE_KEY, PROTOTYP_KEY, DATA_VERSION, STUFEN, STUFEN_REIHE, IH_STATUS, IH_DRINGLICHKEIT, K_STATUS, BEREICHE, AKTIONEN, IMPORT_FELDER,
     today, isISO, addDays, addMonths, endOfMonth, diffDays, maxISO, easterSunday, feiertageNRW, feiertagName, isWochenende, isWerktag,
-    naechsterWerktag, vorherigerWerktag, addWerktage, ordentlicherKuendigungstermin,
+    naechsterWerktag, vorherigerWerktag, addWerktage, mahnFrist, ordentlicherKuendigungstermin,
     fmtDatum, parseDatum, round2, fmtZahl, fmtEUR, parseBetrag, esc, uid, sum, b64utf8, monatLabel,
     mieterName, briefanrede,
     defaultSettings, emptyData, normalize, migratePrototype, stufeAusText,
@@ -2014,7 +2021,7 @@ Mit freundlichen Grüßen
     },
     mail_mahnung: {
       bereich: 'opos', titel: 'E-Mail-Mahnung (Mahnen-Knopf)', empfaenger: 'mieter', nurEmail: true,
-      betreff: 'Zahlungserinnerung – Miete {{monate}} – {{objekt.strasse}}{{mieter.whgKomma}}',
+      betreff: 'Mahnung – Miete {{monate}} – {{objekt.strasse}}{{mieter.whgKomma}}',
       text: `Sehr geehrte Damen und Herren,
 
 nach Prüfung unserer Zahlungseingänge haben wir festgestellt, dass folgende Beträge aus Ihrem Mietkonto bislang nicht beglichen wurden:
@@ -3246,7 +3253,7 @@ Mit freundlichen Grüßen
   /* ---------- Einstellungen ---------- */
   const FRIST_LABEL = {
     erinnerung: 'Zahlungserinnerung: Zahlungsfrist (Tage)', mahnung1: '1. Mahnung: Zahlungsfrist (Tage)', mahnungLetzte: 'Letzte Mahnung: Zahlungsfrist (Tage)',
-    emailMahnung: 'E-Mail-Mahnung (✉ Mahnen): Zahlungsfrist (Tage)', kautionPruefen: 'Kaution: Schäden/Kosten ermitteln nach Übergabe (Tage)', abmahnung: 'Abmahnung: Prüffrist (Tage)', kuendigung: 'Kündigung: Räumungs-/Prüffrist (Tage)', anwalt: 'Anwalt: Sachstand nach (Tagen)',
+    emailMahnung: 'Mahnung (✉ Mahnen): Zahlungsfrist (Werktage)', kautionPruefen: 'Kaution: Schäden/Kosten ermitteln nach Übergabe (Tage)', abmahnung: 'Abmahnung: Prüffrist (Tage)', kuendigung: 'Kündigung: Räumungs-/Prüffrist (Tage)', anwalt: 'Anwalt: Sachstand nach (Tagen)',
     angebot: 'IH: Angebot eingegangen? nach (Tagen)', ausfuehrung: 'IH: Ausführung prüfen ohne Termin (Tage)', rechnung: 'IH: Rechnung prüfen nach Erledigung (Tage)',
     ihMieter: 'IH: Frist Anfrage an Handwerker (Tage)', weiterbelastung: 'IH: Zahlungsfrist Weiterbelastung (Tage)',
     kautionAbrechnungMonate: 'Kaution: Abrechnung nach Übergabe (Monate)', auszahlung: 'Kaution: Auszahlung prüfen nach (Tagen)', bankverbindung: 'Kaution: Frist Bankverbindung (Tage)'
@@ -3670,7 +3677,7 @@ Mit freundlichen Grüßen
     const f = { id: C.uid(), mieterId, stufe: 'neu', posten: [], raten: [], notiz: '', angelegt: C.today() };
     App.data.opos.push(f);
     C.addVerlauf(App.data, 'opos', f.id, 'angelegt', 'Fall angelegt');
-    C.createWV(App.data, 'opos', f.id, C.today(), 'Offene Posten prüfen – Zahlungserinnerung versenden?', { regel: 'opos:neu' });
+    C.createWV(App.data, 'opos', f.id, C.today(), 'Offene Posten prüfen – mahnen?', { regel: 'opos:neu' });
     f.naechsterSchritt = 'Offene Posten prüfen – mahnen?';
     return f;
   }
@@ -3985,7 +3992,7 @@ Mit freundlichen Grüßen
     const vorher = new Set(App.data.opos.map(f => f.id));
     const start = Math.max(1, +w.kopfZeile || 1);
     const st = C.importOPOS(App.data, rows.slice(start), mapping, C.today(), { mieterId });
-    App.data.opos.filter(f => !vorher.has(f.id)).forEach(f => (C.createWV(App.data, 'opos', f.id, C.today(), 'Importierten Fall prüfen – Zahlungserinnerung versenden?', { regel: 'opos:neu' }), f.naechsterSchritt = 'Importierten Fall prüfen – mahnen?'));
+    App.data.opos.filter(f => !vorher.has(f.id)).forEach(f => (C.createWV(App.data, 'opos', f.id, C.today(), 'Importierten Fall prüfen – mahnen?', { regel: 'opos:neu' }), f.naechsterSchritt = 'Importierten Fall prüfen – mahnen?'));
     const fall = mieterId && App.data.opos.find(f => f.mieterId === mieterId && f.stufe !== 'erledigt');
     if (fall) { App.tab = 'opos'; App.detail = fall.id; }
     App.commit();
@@ -4022,7 +4029,7 @@ Mit freundlichen Grüßen
   App.act.oposMahnenMail = async function (ds) {
     const f = H.fall('opos', ds.id); const m = H.mieter(f.mieterId) || {}; const S2 = App.data.settings;
     const offenP = f.posten.filter(p => C.round2(p.offen) !== 0).sort((a, b) => (a.faellig || '').localeCompare(b.faellig || ''));
-    const werte = { to: C.emailsZuMieter(App.data, m), frist: C.addDays(C.today(), Number(S2.fristen.emailMahnung) || 7), abmahnung: S2.email.abmahnungStandard, sel: offenP.map(p => p.id) };
+    const werte = { to: C.emailsZuMieter(App.data, m), frist: C.mahnFrist(C.today(), S2.fristen.emailMahnung), abmahnung: S2.email.abmahnungStandard, sel: offenP.map(p => p.id) };
     let manuell = false;
     const v = await App.formModal('✉ Mahnen – ' + C.mieterName(m), [
       { k: 'to', l: 'Empfänger (E-Mail, mehrere mit ; trennen)', full: true, hint: m.email ? (m.emailQuelle === 'telefonliste' ? 'aus der Telefonliste' + (App.data.meta.telefonlisteStand ? ' vom ' + fmtDatum(App.data.meta.telefonlisteStand) : '') : '')

@@ -659,7 +659,7 @@
   /* ---------- Einstellungen ---------- */
   const FRIST_LABEL = {
     erinnerung: 'Zahlungserinnerung: Zahlungsfrist (Tage)', mahnung1: '1. Mahnung: Zahlungsfrist (Tage)', mahnungLetzte: 'Letzte Mahnung: Zahlungsfrist (Tage)',
-    emailMahnung: 'E-Mail-Mahnung (✉ Mahnen): Zahlungsfrist (Tage)', kautionPruefen: 'Kaution: Schäden/Kosten ermitteln nach Übergabe (Tage)', abmahnung: 'Abmahnung: Prüffrist (Tage)', kuendigung: 'Kündigung: Räumungs-/Prüffrist (Tage)', anwalt: 'Anwalt: Sachstand nach (Tagen)',
+    emailMahnung: 'Mahnung (✉ Mahnen): Zahlungsfrist (Werktage)', kautionPruefen: 'Kaution: Schäden/Kosten ermitteln nach Übergabe (Tage)', abmahnung: 'Abmahnung: Prüffrist (Tage)', kuendigung: 'Kündigung: Räumungs-/Prüffrist (Tage)', anwalt: 'Anwalt: Sachstand nach (Tagen)',
     angebot: 'IH: Angebot eingegangen? nach (Tagen)', ausfuehrung: 'IH: Ausführung prüfen ohne Termin (Tage)', rechnung: 'IH: Rechnung prüfen nach Erledigung (Tage)',
     ihMieter: 'IH: Frist Anfrage an Handwerker (Tage)', weiterbelastung: 'IH: Zahlungsfrist Weiterbelastung (Tage)',
     kautionAbrechnungMonate: 'Kaution: Abrechnung nach Übergabe (Monate)', auszahlung: 'Kaution: Auszahlung prüfen nach (Tagen)', bankverbindung: 'Kaution: Frist Bankverbindung (Tage)'
