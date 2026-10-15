@@ -471,8 +471,12 @@ eq(C.defaultSettings().fristen.emailMahnung, 2, 'Standard: 2 Werktage');
   const dM = testData(); dM.settings.fristen.emailMahnung = 2;
   const rM = C.applyAction(dM, 'opos', 'o1', 'emailMahnung', { heute: '2026-10-15' });
   eq([rM.frist, dM.opos[0].stufe], ['2026-10-19', 'mahnung1'], 'Mahnen am Donnerstag → Frist Montag, Stufe Mahnung');
-  const alt = C.normalize({ settings: { fristen: { emailMahnung: 5 } }, vorlagen: { mail_mahnung: { betreff: 'Zahlungserinnerung – Miete {{monate}}' } }, meta: { takt: 2, schritte: 1 } });
-  eq([alt.settings.fristen.emailMahnung, alt.vorlagen.mail_mahnung.betreff], [2, 'Mahnung – Miete {{monate}}'], 'Umstellung alter Daten: 2 Werktage, Betreff „Mahnung“');
+  const alt = C.normalize({ settings: { fristen: { emailMahnung: 5 } }, vorlagen: { mail_mahnung: { betreff: 'Zahlungserinnerung – Miete {{monate}} – {{objekt.strasse}}{{mieter.whgKomma}}' } }, meta: { takt: 2, schritte: 1 } });
+  eq([alt.settings.fristen.emailMahnung, alt.vorlagen.mail_mahnung.betreff], [2, undefined], 'Umstellung alter Daten: 2 Werktage, alter Standard-Betreff → neuer Standard');
+  const alt2 = C.normalize({ vorlagen: { mail_mahnung: { betreff: 'Mahnung – Miete {{monate}} – {{objekt.strasse}}{{mieter.whgKomma}}' } }, meta: { takt: 2, schritte: 1, mahnWT: 1 } });
+  eq(alt2.vorlagen.mail_mahnung.betreff, undefined, 'auch der Zwischenstand „Mahnung – Miete …“ wird umgestellt');
+  const eigenB = C.normalize({ vorlagen: { mail_mahnung: { betreff: 'Zahlungserinnerung {{mieter.name}}' } }, meta: { takt: 2, schritte: 1 } });
+  eq(eigenB.vorlagen.mail_mahnung.betreff, 'Mahnung {{mieter.name}}', 'eigener Betreff: nur Wort „Mahnung“ ersetzt');
   const eigen = C.normalize({ settings: { fristen: { emailMahnung: 3 } }, meta: { takt: 2, schritte: 1 } });
   eq(eigen.settings.fristen.emailMahnung, 3, 'eigener Wert bleibt');
 }

@@ -211,10 +211,12 @@
     out.vorlagen = d.vorlagen && typeof d.vorlagen === 'object' ? d.vorlagen : {};
     out.meta = Object.assign({ lastBackup: null, erstellt: today() }, d.meta || {});
     if (!(d.meta && d.meta.takt)) out.meta.takt = 1;
-    if (!out.meta.mahnWT) { // ✉ Mahnen: Frist in Werktagen (2), Betreff „Mahnung“ statt „Zahlungserinnerung“
-      if ([5, 7].includes(Number(out.settings.fristen.emailMahnung))) out.settings.fristen.emailMahnung = 2;
-      const mv = out.vorlagen.mail_mahnung; if (mv && mv.betreff) mv.betreff = mv.betreff.replace(/^Zahlungserinnerung\b/, 'Mahnung');
-      out.meta.mahnWT = 1;
+    if (!(out.meta.mahnWT >= 2)) { // ✉ Mahnen: Frist in Werktagen (2), Betreff „Mahnung – Straße – Name“
+      if (!out.meta.mahnWT && [5, 7].includes(Number(out.settings.fristen.emailMahnung))) out.settings.fristen.emailMahnung = 2;
+      const mv = out.vorlagen.mail_mahnung;
+      if (mv && mv.betreff && /^(Zahlungserinnerung|Mahnung) – Miete \{\{monate\}\} – \{\{objekt\.strasse\}\}(\{\{mieter\.whgKomma\}\})?$/.test(mv.betreff.trim())) delete mv.betreff;
+      else if (mv && mv.betreff) mv.betreff = mv.betreff.replace(/^Zahlungserinnerung\b/, 'Mahnung');
+      out.meta.mahnWT = 2;
     }
     if (!out.meta.schritte) { schrittAusWV(out); out.meta.schritte = 1; if (!out.settings.ui.kacheln.includes('flag')) out.settings.ui.kacheln.unshift('flag'); }
     out.opos.forEach(f => { f.posten = f.posten || []; f.raten = f.raten || []; });

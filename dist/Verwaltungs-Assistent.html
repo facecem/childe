@@ -178,7 +178,7 @@ body.kompakt .tbl td{padding:3px 6px} body.kompakt .tbl th{padding:4px 6px} body
 <div id="toasts" aria-live="polite"></div>
 <noscript><p style="padding:20px">Bitte JavaScript aktivieren.</p></noscript>
 <script>
-window.APP_VERSION = '2026-10-15 11:43';
+window.APP_VERSION = '2026-10-15 11:44';
 /* ===== core.js ===== */
 /* ============================================================
  * core – Datum/Werktag/Feiertage, Formatierung, Datenmodell,
@@ -393,10 +393,12 @@ window.APP_VERSION = '2026-10-15 11:43';
     out.vorlagen = d.vorlagen && typeof d.vorlagen === 'object' ? d.vorlagen : {};
     out.meta = Object.assign({ lastBackup: null, erstellt: today() }, d.meta || {});
     if (!(d.meta && d.meta.takt)) out.meta.takt = 1;
-    if (!out.meta.mahnWT) { // ✉ Mahnen: Frist in Werktagen (2), Betreff „Mahnung“ statt „Zahlungserinnerung“
-      if ([5, 7].includes(Number(out.settings.fristen.emailMahnung))) out.settings.fristen.emailMahnung = 2;
-      const mv = out.vorlagen.mail_mahnung; if (mv && mv.betreff) mv.betreff = mv.betreff.replace(/^Zahlungserinnerung\b/, 'Mahnung');
-      out.meta.mahnWT = 1;
+    if (!(out.meta.mahnWT >= 2)) { // ✉ Mahnen: Frist in Werktagen (2), Betreff „Mahnung – Straße – Name“
+      if (!out.meta.mahnWT && [5, 7].includes(Number(out.settings.fristen.emailMahnung))) out.settings.fristen.emailMahnung = 2;
+      const mv = out.vorlagen.mail_mahnung;
+      if (mv && mv.betreff && /^(Zahlungserinnerung|Mahnung) – Miete \{\{monate\}\} – \{\{objekt\.strasse\}\}(\{\{mieter\.whgKomma\}\})?$/.test(mv.betreff.trim())) delete mv.betreff;
+      else if (mv && mv.betreff) mv.betreff = mv.betreff.replace(/^Zahlungserinnerung\b/, 'Mahnung');
+      out.meta.mahnWT = 2;
     }
     if (!out.meta.schritte) { schrittAusWV(out); out.meta.schritte = 1; if (!out.settings.ui.kacheln.includes('flag')) out.settings.ui.kacheln.unshift('flag'); }
     out.opos.forEach(f => { f.posten = f.posten || []; f.raten = f.raten || []; });
@@ -2021,7 +2023,7 @@ Mit freundlichen Grüßen
     },
     mail_mahnung: {
       bereich: 'opos', titel: 'E-Mail-Mahnung (Mahnen-Knopf)', empfaenger: 'mieter', nurEmail: true,
-      betreff: 'Mahnung – Miete {{monate}} – {{objekt.strasse}}{{mieter.whgKomma}}',
+      betreff: 'Mahnung – {{objekt.strasse}} – {{mieter.name}}',
       text: `Sehr geehrte Damen und Herren,
 
 nach Prüfung unserer Zahlungseingänge haben wir festgestellt, dass folgende Beträge aus Ihrem Mietkonto bislang nicht beglichen wurden:
