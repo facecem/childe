@@ -486,5 +486,29 @@ section('PDF-Umlaute: Ä');
 eq(C.pdfUmlaute('R‹CKLAST HƒRTER, DANNY FRAU'), 'RÜCKLAST HÄRTER, DANNY FRAU', 'ƒ → Ä (Zeichensatz der OPOS-PDF)');
 eq(C.normalize({ opos: [{ id: 'x', posten: [{ id: 'p', bez: 'RL-Gebühr Bank 05.08.25 HƒR' }] }], meta: { takt: 2, schritte: 1, mahnWT: 2 } }).opos[0].posten[0].bez, 'RL-Gebühr Bank 05.08.25 HÄR', 'bereits eingelesene Posten werden repariert');
 
+
+section('OPOS-PDF: Debitor-Nr. nur je Objekt eindeutig');
+{
+  const kto = (objektNr, strasse, debitor, name, posten) => ({ objektNr, objektStrasse: strasse, objektPlzOrt: '52062 Aachen', debitor, name, whg: '1', pfkt: '', rolle: '', von: '2020-01-01', bis: '', lage: '',
+    posten: posten.map(([text, betrag]) => ({ text, betrag, soll: betrag, haben: 0, faellig: '2026-09-01', budatum: '2026-09-01', beleg: '1', aa: '820', mst: 0, tage: 10, typ: 'miete' })),
+    saldo: C.sum(posten, x => x[1]), kontrolle: true });
+  const dD = C.emptyData();
+  C.importOposPdf(dD, { stand: '2026-09-11', konten: [kto('190010', 'ADALBERTSTEINWEG 1', '700001', 'Trettin, Anna', [['Grundmiete 09/26', 700]])] }, { heute: '2026-09-11' });
+  const liste = { stand: '2026-10-15', konten: [kto('190020', 'BEISPIELWEG 2', '700001', 'Härter, Danny', [['RÜCKLAST HÄRTER, DANNY FRAU', 649]]), kto('190010', 'ADALBERTSTEINWEG 1', '700001', 'Trettin, Anna', [['Grundmiete 10/26', 700]])] };
+  C.importOposPdf(dD, liste, { heute: '2026-10-15' });
+  const posten = n => { const m = dD.mieter.find(x => x.nachname === n); const f = dD.opos.find(x => x.mieterId === m.id); return f.posten.map(p => p.bez); };
+  eq([dD.mieter.length, posten('Trettin'), posten('Härter')], [2, ['Grundmiete 10/26'], ['RÜCKLAST HÄRTER, DANNY FRAU']], 'gleiche Debitor-Nr. in anderem Objekt → eigener Mieter, nicht bei Trettin');
+  // Reparatur: falsch zugeordnete Posten verschwinden beim nächsten Einlesen
+  const fT = dD.opos.find(x => x.mieterId === dD.mieter.find(m => m.nachname === 'Trettin').id);
+  fT.posten.push({ id: 'x', bez: 'RÜCKLAST HÄRTER, DANNY FRAU', betrag: 649, offen: 649, quelle: 'opos-pdf' });
+  dD.mieter.find(m => m.nachname === 'Trettin').mietnrObjekt = undefined;
+  C.importOposPdf(dD, liste, { heute: '2026-10-16' });
+  eq(posten('Trettin'), ['Grundmiete 10/26'], 'falsch zugeordnete Posten werden beim erneuten Einlesen entfernt');
+  // zwei Konten desselben Mieters (Wohnung + Stellplatz) → Posten werden ergänzt
+  const dZ = C.emptyData();
+  C.importOposPdf(dZ, { stand: '2026-10-15', konten: [kto('190010', 'ADALBERTSTEINWEG 1', '700001', 'Trettin, Anna', [['Grundmiete 10/26', 700]]), kto('190010', 'ADALBERTSTEINWEG 1', '700002', 'Trettin, Anna', [['Stellplatz 10/26', 50]])] }, { heute: '2026-10-15' });
+  eq(dZ.opos[0].posten.map(p => p.bez), ['Grundmiete 10/26', 'Stellplatz 10/26'], 'Wohnung + Stellplatz: beide Konten im Fall');
+}
+
 console.log('\n' + ok + ' bestanden, ' + fail + ' fehlgeschlagen');
 process.exit(fail ? 1 : 0);

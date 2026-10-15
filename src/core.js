@@ -1200,12 +1200,17 @@
     const gut = -sum((posten || []).filter(p => round2(p.offen) < 0), p => p.offen);
     return gut > 0 ? verteileZahlung(plus, gut).posten.filter(p => round2(p.offen) > 0) : plus;
   }
+  /** Debitor-Nr.-Treffer nur, wenn der Name nicht offensichtlich ein anderer ist (alte, falsch zugeordnete Daten) */
+  function namePasst(m, name) {
+    const a = normName(m.importName || ''), b = normName(name);
+    return !a || !b || a === b || namensfeldGleich(a, b) || a.startsWith(b) || b.startsWith(a);
+  }
   /** OPOS-Liste (PDF) übernehmen: Posten je Fall werden durch die Liste ersetzt (manuell erfasste bleiben) */
   function importOposPdf(data, liste, o = {}) {
     const heute = o.heute || today(), stand = liste.stand || liste.druck || heute;
     const min = o.mindestSaldo == null ? 0.01 : o.mindestSaldo;
     const st = { konten: liste.konten.length, faelleNeu: 0, mieterNeu: 0, objekteNeu: 0, aktualisiert: 0, unveraendert: 0, erledigt: 0, guthaben: 0, posten: 0, kontrolleFehler: [], uebersprungen: 0, summe: 0 };
-    const gesehen = new Set(), objekteInListe = new Set();
+    const gesehen = new Set(), objekteInListe = new Set(), neuGefuellt = new Set();
     liste.konten.forEach(kt => {
       let ob = data.objekte.find(x => x.nr === kt.objektNr);
       if (!ob && kt.objektNr) {
@@ -1214,10 +1219,13 @@
       }
       if (ob) objekteInListe.add(ob.id);
       if (kt.kontrolle === false) st.kontrolleFehler.push(kt.debitor + ' ' + kt.name);
-      let m = data.mieter.find(x => x.mietnr && x.mietnr === kt.debitor) || findeMieter(data, { name: kt.name, von: kt.von }, gesehen);
+      // Debitor-Nr. sind nur je Objekt eindeutig (700001 gibt es in mehreren Objekten) → immer mit Objekt vergleichen
+      const imObjekt = x => { if (!ob || !x.objektId || x.objektId === ob.id) return true; const o2 = data.objekte.find(y => y.id === x.objektId); return !o2 || PLATZHALTER_OBJEKT.test(o2.bezeichnung); };
+      let m = data.mieter.find(x => x.mietnr && x.mietnr === kt.debitor && imObjekt(x) && (!x.mietnrObjekt || x.mietnrObjekt === kt.objektNr) && namePasst(x, kt.name));
+      if (!m) { m = findeMieter(data, { name: kt.name, von: kt.von }, gesehen); if (m && !imObjekt(m)) m = null; }
       if (!m) {
         const k2 = normName(kt.name);
-        m = data.mieter.find(x => !gesehen.has(x.id) && (!kt.von || !x.mietbeginn || x.mietbeginn === kt.von) && namensfeldGleich(normName(x.importName || ''), k2)) || null;
+        m = data.mieter.find(x => !gesehen.has(x.id) && imObjekt(x) && (!kt.von || !x.mietbeginn || x.mietbeginn === kt.von) && namensfeldGleich(normName(x.importName || ''), k2)) || null;
       }
       if (!m && !(kt.saldo >= min)) { st.uebersprungen++; return; }
       if (!m) {
@@ -1225,12 +1233,12 @@
         data.mieter.push(m); st.mieterNeu++;
       }
       gesehen.add(m.id);
-      m.mietnr = kt.debitor; if (!m.importName) m.importName = kt.name;
+      m.mietnr = kt.debitor; m.mietnrObjekt = kt.objektNr; if (!m.importName) m.importName = kt.name;
       if (kt.von && !m.mietbeginn) m.mietbeginn = kt.von;
       if (kt.bis !== undefined && (kt.bis || m.mietende)) m.mietende = kt.bis || m.mietende;
       const akt = data.objekte.find(x => x.id === m.objektId);
       if (ob && (!akt || PLATZHALTER_OBJEKT.test(akt.bezeichnung))) m.objektId = ob.id;
-      if ((!m.whg || /^Whg\. [\d, Whg.]+$/.test(m.whg)) && (kt.lage || kt.whg)) m.whg = (kt.lage ? kt.lage + ' ' : '') + '(Whg. ' + kt.whg + ')';
+      if ((!m.whg || /^Whg\. [\d, Whg.]+$/.test(m.whg) || /\(Whg\. [^)]*\)$/.test(m.whg)) && (kt.lage || kt.whg)) m.whg = (kt.lage ? kt.lage + ' ' : '') + '(Whg. ' + kt.whg + ')';
       let fall = data.opos.find(f => f.mieterId === m.id && f.stufe !== 'erledigt');
       if (!fall) {
         if (!(kt.saldo >= min)) { if (kt.saldo < 0) st.guthaben++; else st.uebersprungen++; return; }
@@ -1239,7 +1247,9 @@
         if (o.pruefWV) { createWV(data, 'opos', fall.id, heute, 'Importierten Fall prüfen – Mahnen?', { regel: 'opos:neu', heute }); fall.naechsterSchritt = 'Importierten Fall prüfen – mahnen?'; }
       }
       const vorher = offenSumme(fall.posten);
-      fall.posten = fall.posten.filter(p => !p.saldo && !p.quelle);
+      // mehrere Konten desselben Mieters (Wohnung + Stellplatz …): Posten ergänzen statt ersetzen
+      if (!neuGefuellt.has(fall.id)) fall.posten = fall.posten.filter(p => !p.saldo && !p.quelle);
+      neuGefuellt.add(fall.id);
       kt.posten.forEach(p => fall.posten.push({ id: uid(), bez: p.text, faellig: p.faellig, budatum: p.budatum, beleg: p.beleg, aa: p.aa, mst: p.mst, tage: p.tage,
         typ: p.typ, betrag: p.betrag, offen: p.betrag, quelle: 'opos-pdf' }));
       fall.oposStand = stand; fall.mahnstufeListe = Math.max(0, ...kt.posten.map(p => p.mst || 0));
